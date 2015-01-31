@@ -167,5 +167,8 @@ class TestPrinting(TestCase):
 
         self.assertTrue(len(short_f_str) < len(long_f_str))
 
+    def test_smart_serialize(self):
+        raise NotImplementedError
+
 if __name__ == '__main__':
     unittest.main()
