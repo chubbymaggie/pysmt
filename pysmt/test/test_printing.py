@@ -25,6 +25,7 @@ from pysmt.shortcuts import Times, Minus, Equals, LE, LT, ToReal
 from pysmt.shortcuts import get_env
 from pysmt.typing import REAL, INT, FunctionType
 from pysmt.smtlib.printers import SmtPrinter, SmtDagPrinter
+from pysmt.printers import smart_serialize
 from pysmt.test import TestCase
 
 class TestPrinting(TestCase):
@@ -168,7 +169,13 @@ class TestPrinting(TestCase):
         self.assertTrue(len(short_f_str) < len(long_f_str))
 
     def test_smart_serialize(self):
-        raise NotImplementedError
+        x, y = Symbol("x"), Symbol("y")
+        f1 = And(x,y)
+        f = Implies(x, f1)
+        smarties = {f1: "f1"}  # Mapping FNode -> String
+        res = smart_serialize(f, smarties=smarties)
+        self.assertEquals("(x -> f1)", res)
+
 
 if __name__ == '__main__':
     unittest.main()
