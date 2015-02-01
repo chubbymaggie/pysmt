@@ -176,6 +176,9 @@ class TestPrinting(TestCase):
         res = smart_serialize(f, smarties=smarties)
         self.assertEquals("(x -> f1)", res)
 
+        res = smart_serialize(f)
+        self.assertIsNotNone(res)
+        self.assertEquals(str(f), res)
 
 if __name__ == '__main__':
     unittest.main()

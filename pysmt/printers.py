@@ -341,7 +341,7 @@ class SmartPrinter(HRPrinter):
             self.stream.write(self.tb(self.smarties[formula]))
             return True
 
-def smart_serialize(formula, smarties, threshold=None):
+def smart_serialize(formula, smarties=None, threshold=None):
     buf = get_io_buffer()
     p = SmartPrinter(buf, useBytes=False, smarties=smarties)
     p.printer(formula, threshold=threshold)
