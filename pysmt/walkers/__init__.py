@@ -36,3 +36,4 @@ it only once.
 from pysmt.walkers.dag import DagWalker
 from pysmt.walkers.tree import TreeWalker
 from pysmt.walkers.identitydag import IdentityDagWalker
+from pysmt.walkers.polaritydag import PolarityDagWalker
