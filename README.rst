@@ -27,10 +27,10 @@ Getting Started
 ===============
 You can install the latest stable release of pySMT from PyPI:
 
-  $ pip install pysmt
+  # pip install pysmt
 this will additionally install the *pysmt-install* command, that can be used to install the solvers: e.g.,
 
-  $ pysmt-install --msat
+  # pysmt-install --msat
 this will download and install Mathsat 5. You will need to set your PYTHONPATH as suggested by the installer to make the python bindings visible. To verify that a solver has been installed run
 
   $ pysmt-install --check
