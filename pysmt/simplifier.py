@@ -79,12 +79,19 @@ class Simplifier(walkers.DagWalker):
             return self.manager.TRUE()
         elif len(args) == 1:
             return args[0]
-
         else:
             if any(x.is_false() for x in args):
                 return self.manager.FALSE()
 
-        return self.manager.And(args)
+        # Squash Ands
+        new_args = []
+        for x in args:
+            if x.is_and():
+                new_args += x.get_sons()
+            else:
+                new_args.append(x)
+
+        return self.manager.And(new_args)
 
 
     def walk_or(self, formula, args):
@@ -93,12 +100,19 @@ class Simplifier(walkers.DagWalker):
             return self.manager.FALSE()
         elif len(args) == 1:
             return args[0]
-
         else:
             if any(x.is_true() for x in args):
                 return self.manager.TRUE()
 
-        return self.manager.Or(args)
+        # Squash Ors
+        new_args = []
+        for x in args:
+            if x.is_or():
+                new_args += x.get_sons()
+            else:
+                new_args.append(x)
+
+        return self.manager.Or(new_args)
 
 
     def walk_not(self, formula, args):
