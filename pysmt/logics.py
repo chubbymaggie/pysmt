@@ -215,6 +215,10 @@ class Logic(object):
                              theory=self.theory)
         return get_closer_pysmt_logic(target_logic)
 
+    def is_quantified(self):
+        """Return whether the logic supports quantifiers."""
+        return not self.quantifier_free
+
     def __str__(self):
         return self.name
 
@@ -246,6 +250,8 @@ class Logic(object):
     def __gt__(self, other):
         return (other.__lt__(self))
 
+    def __hash__(self):
+        return hash(self.name)
 
 # Logics
 
@@ -537,51 +543,53 @@ symbols.""",
 AUTO = Logic(name="Auto",
              description="Special logic used to indicate that the logic to be used depends on the formula.")
 
-SMTLIB2_LOGICS = [ AUFLIA,
-                   AUFLIRA,
-                   AUFNIRA,
-                   ALIA,
-                   LRA,
-                   LIA,
-                   NIA,
-                   NRA,
-                   UFLRA,
-                   UFNIA,
-                   UFLIRA,
-                   QF_ABV,
-                   QF_AUFBV,
-                   QF_AUFLIA,
-                   QF_ALIA,
-                   QF_AX,
-                   QF_BV,
-                   QF_IDL,
-                   QF_LIA,
-                   QF_LRA,
-                   QF_NIA,
-                   QF_NRA,
-                   QF_RDL,
-                   QF_UF,
-                   QF_UFBV ,
-                   QF_UFIDL,
-                   QF_UFLIA,
-                   QF_UFLRA,
-                   QF_UFNRA,
-                   QF_UFNIA,
-                   QF_UFLIRA
-               ]
+SMTLIB2_LOGICS = frozenset([ AUFLIA,
+                             AUFLIRA,
+                             AUFNIRA,
+                             ALIA,
+                             LRA,
+                             LIA,
+                             NIA,
+                             NRA,
+                             UFLRA,
+                             UFNIA,
+                             UFLIRA,
+                             QF_ABV,
+                             QF_AUFBV,
+                             QF_AUFLIA,
+                             QF_ALIA,
+                             QF_AX,
+                             QF_BV,
+                             QF_IDL,
+                             QF_LIA,
+                             QF_LRA,
+                             QF_NIA,
+                             QF_NRA,
+                             QF_RDL,
+                             QF_UF,
+                             QF_UFBV ,
+                             QF_UFIDL,
+                             QF_UFLIA,
+                             QF_UFLRA,
+                             QF_UFNRA,
+                             QF_UFNIA,
+                             QF_UFLIRA
+                         ])
 
-LOGICS = SMTLIB2_LOGICS + [ QF_BOOL, BOOL ]
+LOGICS = SMTLIB2_LOGICS | frozenset([ QF_BOOL, BOOL ])
 
-QF_LOGICS = [_l for _l in LOGICS if _l.quantifier_free]
+QF_LOGICS = frozenset(_l for _l in LOGICS if _l.quantifier_free)
 
 #
 # This is the set of logics supported by the current version of pySMT
 #
-PYSMT_LOGICS = [QF_BOOL, QF_IDL, QF_LIA, QF_LRA, QF_RDL, QF_UF, QF_UFIDL,
-                QF_UFLIA, QF_UFLRA, QF_UFLIRA,
-                BOOL, LRA, LIA, UFLIRA, UFLRA ]
+PYSMT_LOGICS = frozenset([QF_BOOL, QF_IDL, QF_LIA, QF_LRA, QF_RDL, QF_UF, QF_UFIDL,
+                          QF_UFLIA, QF_UFLRA, QF_UFLIRA,
+                          BOOL, LRA, LIA, UFLIRA, UFLRA,
+                          QF_BV, QF_UFBV])
+BV_LOGICS = frozenset([QF_BV, QF_UFBV])
 
-PYSMT_QF_LOGICS = [_l for _l in PYSMT_LOGICS if _l.quantifier_free]
+PYSMT_QF_LOGICS = frozenset(_l for _l in PYSMT_LOGICS if _l.quantifier_free)
 
 
 def get_logic_by_name(name):
@@ -630,16 +638,16 @@ def get_logic(quantifier_free=False,
     """
 
     for logic in LOGICS:
-        if (logic.quantifier_free == quantifier_free and
-            logic.theory.arrays == arrays and \
-            logic.theory.bit_vectors == bit_vectors and \
-            logic.theory.floating_point == floating_point and \
-            logic.theory.integer_arithmetic == integer_arithmetic and \
-            logic.theory.real_arithmetic == real_arithmetic and \
-            logic.theory.integer_difference == integer_difference and \
-            logic.theory.real_difference == real_difference and \
-            logic.theory.linear == linear and \
-            logic.theory.uninterpreted == uninterpreted):
+        if (  logic.quantifier_free == quantifier_free and
+              logic.theory.arrays == arrays and \
+              logic.theory.bit_vectors == bit_vectors and \
+              logic.theory.floating_point == floating_point and \
+              logic.theory.integer_arithmetic == integer_arithmetic and \
+              logic.theory.real_arithmetic == real_arithmetic and \
+              logic.theory.integer_difference == integer_difference and \
+              logic.theory.real_difference == real_difference and \
+              logic.theory.linear == linear and \
+              logic.theory.uninterpreted == uninterpreted):
             return logic
     raise UndefinedLogicError
 
@@ -652,7 +660,7 @@ def most_generic_logic(logics):
     res = [ l for l in logics if all(l >= x for x in logics)]
 
     if len(res) != 1:
-        raise NoLogicAvailableError("Could not find the most generic"
+        raise NoLogicAvailableError("Could not find the most generic "
                                     "logic for %s." % str(logics))
     return res[0]
 

@@ -19,8 +19,6 @@
 The Environment is a key structure in pySMT. It contains multiple
 singleton objects that are used throughout the system, such as the
 FormulaManager, Simplifier, HRSerializer, SimpleTypeChecker.
-
-A global environment is defined in shortcuts.py
 """
 
 import pysmt.simplifier
@@ -30,15 +28,14 @@ import pysmt.type_checker
 import pysmt.oracles
 import pysmt.formula
 import pysmt.factory
-import pysmt.shortcuts
 import pysmt.decorators
 
+
 class Environment(object):
-    FormulaManagerClass = pysmt.formula.FormulaManager
 
     def __init__(self):
         self._stc = pysmt.type_checker.SimpleTypeChecker(self)
-        self._formula_manager = self.FormulaManagerClass(self)
+        self._formula_manager = pysmt.formula.FormulaManager(self)
         # NOTE: Both Simplifier and Substituter keep an internal copy
         # of the Formula Manager
         self._simplifier = pysmt.simplifier.Simplifier(self)
@@ -47,6 +44,8 @@ class Environment(object):
         self._qfo = pysmt.oracles.QuantifierOracle(self)
         self._theoryo = pysmt.oracles.TheoryOracle(self)
         self._fvo = pysmt.oracles.FreeVarsOracle(self)
+        self._sizeo = pysmt.oracles.SizeOracle(self)
+        self._ao = pysmt.oracles.AtomsOracle(self)
 
         self._factory = None
         # Configurations
@@ -83,6 +82,11 @@ class Environment(object):
         return self._qfo
 
     @property
+    def ao(self):
+        """ Get the Atoms Oracle """
+        return self._ao
+
+    @property
     def theoryo(self):
         """ Get the Theory Oracle """
         return self._theoryo
@@ -91,6 +95,11 @@ class Environment(object):
     def fvo(self):
         """ Get the FreeVars Oracle """
         return self._fvo
+
+    @property
+    def sizeo(self):
+        """ Get the FreeVars Oracle """
+        return self._sizeo
 
     def add_dynamic_walker_function(self, nodetype, walker, function):
         """Dynamically bind the given function to the walker for the nodetype.
@@ -117,11 +126,37 @@ class Environment(object):
 
     def __enter__(self):
         """Entering a Context """
-        pysmt.shortcuts.push_env(self)
+        push_env(self)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Remove environment from global stack."""
-        pysmt.shortcuts.pop_env()
+        pop_env()
 
 # EOC Environment
+
+#### GLOBAL ENVIRONMENTS STACKS ####
+ENVIRONMENTS_STACK = []
+
+def get_env():
+    """Returns the Environment at the head of the stack."""
+    return ENVIRONMENTS_STACK[-1]
+
+def push_env(env=None):
+    """Push a env in the stack. If env is None, a new Environment is created."""
+    if env is None:
+        env = Environment()
+    ENVIRONMENTS_STACK.append(env)
+
+def pop_env():
+    """Pop an env from the stack."""
+    return ENVIRONMENTS_STACK.pop()
+
+def reset_env():
+    """Destroys and recreate the head environment."""
+    pop_env()
+    push_env()
+    return get_env()
+
+# Create the default environment
+push_env()

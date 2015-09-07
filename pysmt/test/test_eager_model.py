@@ -18,7 +18,7 @@
 from six.moves import xrange
 
 from pysmt.test import TestCase
-from pysmt.shortcuts import And, Or, FALSE, TRUE, FreshSymbol, get_env
+from pysmt.shortcuts import And, Or, FALSE, TRUE, FreshSymbol
 from pysmt.solvers.eager import EagerModel
 from pysmt.typing import REAL, INT
 
@@ -31,8 +31,7 @@ class TestEagerModel(TestCase):
 
         d = {x: TRUE(), y: FALSE()}
 
-        model = EagerModel(assignment=d,
-                           environment=get_env())
+        model = EagerModel(assignment=d)
 
         self.assertEqual(model.get_value(x), TRUE())
         self.assertEqual(model.get_value(y), FALSE())
@@ -54,7 +53,7 @@ class TestEagerModel(TestCase):
 
         model = EagerModel(assignment=d)
         with self.assertRaises(TypeError):
-            model.get_value(And(x,y))
+            model.get_value(And(x,y), model_completion=False)
 
         d2 = {x:TRUE(), y:x}
         model = EagerModel(assignment=d2)
@@ -69,18 +68,25 @@ class TestEagerModel(TestCase):
         d = {x:TRUE()}
 
         model = EagerModel(assignment=d)
-        model.complete_model([x,y,r,p])
 
         self.assertEqual(model.get_value(x), TRUE())
         self.assertEqual(model.get_value(Or(x,y)), TRUE())
         self.assertTrue(model.get_value(p).is_constant(INT))
         self.assertTrue(model.get_value(r).is_constant(REAL))
 
+        self.assertEqual(model.get_value(x, model_completion=False), TRUE())
+        with self.assertRaises(TypeError):
+            model.get_value(And(x,y), model_completion=False)
+        with self.assertRaises(TypeError):
+            model.get_value(p, model_completion=False)
+        with self.assertRaises(TypeError):
+            model.get_value(r, model_completion=False)
+
+
     def test_contains(self):
         x, y, z = [FreshSymbol() for _ in xrange(3)]
         d = {x: TRUE(), y: FALSE()}
-        model = EagerModel(assignment=d,
-                           environment=get_env())
+        model = EagerModel(assignment=d)
         self.assertTrue(x in model)
         self.assertFalse(z in model)
 

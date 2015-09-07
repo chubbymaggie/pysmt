@@ -1,5 +1,7 @@
+from io import TextIOWrapper
 from subprocess import Popen, PIPE
-from six import iteritems
+
+from six import iteritems, PY2
 
 import pysmt.smtlib.commands as smtcmd
 from pysmt.solvers.eager import EagerModel
@@ -16,36 +18,56 @@ class SmtLibSolver(Solver):
     the executable. Interaction with the solver occurs via pipe.
     """
 
-    def __init__(self, args, environment, logic, options=None):
-        Solver.__init__(self, environment, logic=logic, options=options)
+    def __init__(self, args, environment, logic, user_options=None,
+                 LOGICS=None):
+        Solver.__init__(self,
+                        environment,
+                        logic=logic,
+                        user_options=user_options)
 
+        if LOGICS is not None: self.LOGICS = LOGICS
         self.args = args
         self.declared_vars = set()
         self.solver = Popen(args, stdout=PIPE, stderr=PIPE, stdin=PIPE)
-        self.parser = SmtLibParser()
+        self.parser = SmtLibParser(interactive=True)
+        if PY2:
+            self.solver_stdin = self.solver.stdin
+            self.solver_stdout = self.solver.stdout
+        else:
+            self.solver_stdin = TextIOWrapper(self.solver.stdin)
+            self.solver_stdout = TextIOWrapper(self.solver.stdout)
+
         self.dbg = False
 
         # Initialize solver
         self._send_command(SmtLibCommand(smtcmd.SET_OPTION, [":print-success", "false"]))
         self._send_command(SmtLibCommand(smtcmd.SET_OPTION, [":produce-models", "true"]))
-        if options is not None:
-            for o,v in iteritems(options):
+
+        if self.options is not None:
+            for o,v in iteritems(self.options):
                 self._send_command(SmtLibCommand(smtcmd.SET_OPTION, [o, v]))
         self._send_command(SmtLibCommand(smtcmd.SET_LOGIC, [logic]))
 
+    def get_default_options(self, logic=None, user_options=None):
+        res = {}
+        for o,v in iteritems(user_options):
+            if o not in ["generate_models", "unsat_cores_mode"]:
+                res[o] = v
+        return res
 
     def _send_command(self, cmd):
         if self.dbg: print("Sending: " + cmd.serialize_to_string())
-        cmd.serialize(self.solver.stdin, daggify=True)
-        self.solver.stdin.write("\n")
+        cmd.serialize(self.solver_stdin, daggify=True)
+        self.solver_stdin.write("\n")
+        self.solver_stdin.flush()
 
     def _get_answer(self):
-        res = self.solver.stdout.readline().strip()
+        res = self.solver_stdout.readline().strip()
         if self.dbg: print("Read: " + str(res))
         return res
 
     def _get_value_answer(self):
-        lst = self.parser.get_assignment_list(self.solver.stdout)
+        lst = self.parser.get_assignment_list(self.solver_stdout)
         if self.dbg: print("Read: " + str(lst))
         return lst
 
@@ -108,5 +130,7 @@ class SmtLibSolver(Solver):
 
     def exit(self):
         self._send_command(SmtLibCommand(smtcmd.EXIT, []))
+        self.solver_stdin.close()
+        self.solver_stdout.close()
         self.solver.terminate()
         return

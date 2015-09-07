@@ -75,16 +75,20 @@ def get_pyices_download_link(git_version):
         return mirror + ("/pyices-%s.tar.gz" % git_version)
     return "https://codeload.github.com/cheshire/pyices/tar.gz/%s" % git_version
 
-def get_pycudd_download_link(archive_name):
-    if mirror is not None:
-        return mirror + "/" + archive_name
-    return "http://bears.ece.ucsb.edu/ftp/pub/pycudd2.0/%s" % archive_name
+def get_pycudd_download_link(git_version, skip_mirror=False):
+    if not skip_mirror and mirror is not None:
+        return mirror + ("/repycudd-%s.tar.gz" % git_version)
+    return "https://codeload.github.com/pysmt/repycudd/tar.gz/%s" % git_version
 
 def get_picosat_download_link(archive_name):
     if mirror is not None:
         return mirror + "/" + archive_name
     return "http://fmv.jku.at/picosat/%s" % archive_name
 
+def get_boolector_download_link(archive_name):
+    if mirror is not None:
+        return mirror + "/" + archive_name
+    return "http://fmv.jku.at/boolector/%s" % archive_name
 
 ################################################################################
 # Utility functions
@@ -115,12 +119,17 @@ def unzip(fname, directory="."):
     with zipfile.ZipFile(fname, "r") as myzip:
         myzip.extractall(directory)
 
+def download_patch(name, target):
+    SOURCE_URL="https://raw.githubusercontent.com/pysmt/solvers_patches/master/"
+    url = SOURCE_URL + name
+    download(url, target)
+
 def download(url, file_name):
     """Downloads the given url into the given file name"""
     u = urllib2.urlopen(url)
     f = open(file_name, 'wb')
     meta = u.info()
-    if len(meta.get("Content-Length")) > 0:
+    if meta.get("Content-Length") and len(meta.get("Content-Length")) > 0:
         file_size = int(meta.get("Content-Length"))
         print("Downloading: %s Bytes: %s" % (file_name, file_size))
 
@@ -132,7 +141,8 @@ def download(url, file_name):
             break
 
         f.write(buff)
-        if len(meta.get("Content-Length")) > 0 and sys.stdout.isatty():
+        if meta.get("Content-Length") and len(meta.get("Content-Length")) > 0 \
+           and sys.stdout.isatty():
             count += len(buff)
             perc = (float(count) / float(file_size)) * 100.0
             str_perc = "%.1f%%" % perc
@@ -150,7 +160,7 @@ def download(url, file_name):
 def install_msat(options):
     """Installer for the MathSAT5 solver python interafce"""
 
-    base_name =  "mathsat-5.2.12-linux-%s" % get_architecture()
+    base_name =  "mathsat-5.3.6-linux-%s" % get_architecture()
     archive_name = "%s.tar.gz" % base_name
     archive = os.path.join(BASE_DIR, archive_name)
     dir_path = os.path.join(BASE_DIR, base_name)
@@ -217,7 +227,6 @@ def install_z3(options):
     PATHS.append("%s/lib/python2.7/dist-packages" % install_path)
 
 
-
 def install_cvc4(options):
     """Installer for the CVC4 solver python interafce"""
 
@@ -226,14 +235,14 @@ def install_cvc4(options):
     archive_name = "%s.tar.gz" % base_name
     archive = os.path.join(BASE_DIR, archive_name)
     dir_path = os.path.join(BASE_DIR, base_name)
+    bin_path = os.path.join(BASE_DIR, "CVC4_bin")
+    patch_name = "cvc4_wrapper.patch"
 
     # Use precompiled version of the solver
     if bin_mirror is not None:
         bin_archive = os.path.join(bin_mirror, archive_name)
         download(bin_archive, archive)
         untar(archive, BASE_DIR)
-        PATHS.append("%s/CVC4_bin/share/pyshared" % BASE_DIR)
-        PATHS.append("%s/CVC4_bin/lib/pyshared" % BASE_DIR)
         return
 
     # Download the cvc4 release if needed
@@ -241,30 +250,34 @@ def install_cvc4(options):
         download(get_cvc4_download_link(git), archive)
 
     # clear the destination directory, if any
-    if os.path.exists(dir_path):
-        os.system("rm -rf %s" % dir_path)
+    if os.path.exists(bin_path):
+        os.system("rm -rf %s" % bin_path)
 
     # Extract the CVC4 distribution
     untar(archive, BASE_DIR)
 
     # Patch the distribution to avoid a known problem
-    os.system("cd %s; patch -p1 -i %s/patches/cvc4_wrapper.patch" % (dir_path, CWD))
+    download_patch(patch_name, "%s/cvc4_wrapper.patch" % dir_path)
+    os.system("cd %s; patch -p1 -i cvc4_wrapper.patch" % dir_path)
 
     # Prepare the building system
     os.system("cd %s; bash autogen.sh;" % dir_path)
     # Build ANTLR
     os.system("cd %s/contrib; bash get-antlr-3.4;" % dir_path)
     # Configure and build CVC4
-    os.system("cd %s; \
-    ./configure --enable-language-bindings=python \
-                --with-antlr-dir=%s/antlr-3.4 ANTLR=%s/antlr-3.4/bin/antlr3; make " %\
-              (dir_path, dir_path, dir_path))
+    os.system("cd {dir_path}; \
+    ./configure --prefix={bin_path} \
+                --enable-language-bindings=python \
+                --with-antlr-dir={dir_path}/antlr-3.4 ANTLR={dir_path}/antlr-3.4/bin/antlr3;\
+    make; \
+    make install ".format(bin_path=bin_path, dir_path=dir_path))
+
     # Fix the paths of the bindings
-    os.system("cd %s/builds/src/bindings/python; mv .libs/CVC4.so.3.0.0 ./_CVC4.so" % dir_path)
+    os.system("cd %s/lib/pyshared; ln -s CVC4.so.3.0.0 _CVC4.so" % bin_path )
 
     # Save the paths
-    PATHS.append("%s/builds/src/bindings/python" % dir_path)
-
+    PATHS.append("%s/share/pyshared" % bin_path)
+    PATHS.append("%s/lib/pyshared" % bin_path)
 
 
 def install_yices(options):
@@ -321,11 +334,10 @@ def install_yices(options):
     PATHS.append("%s/build/lib.linux-%s-%s" % (pyices_dir_path, get_architecture(), get_python_version()))
 
 
-
 def install_pycudd(options):
     """Installer for the CUDD library python interafce"""
-
-    base_name =  "pycudd2.0.2"
+    pycudd_git = "4861f4df8abc2ca205a6a09b30fdc8cfd29f6ebb"
+    base_name =  "repycudd-%s" % pycudd_git
     archive_name = "%s.tar.gz" % base_name
     archive = os.path.join(BASE_DIR, archive_name)
     dir_path = os.path.join(BASE_DIR, base_name)
@@ -340,17 +352,14 @@ def install_pycudd(options):
 
     # Download pycudd if needed
     if not os.path.exists(archive):
-        download(get_pycudd_download_link(archive_name), archive)
+        download(get_pycudd_download_link(pycudd_git, True), archive)
 
-    # clear the destination directory, if any
+    # Clear the destination directory, if any
     if os.path.exists(dir_path):
         os.system("rm -rf %s" % dir_path)
 
     # Extract the pycudd distribution
     untar(archive, BASE_DIR)
-
-    # patch the distribution
-    os.system("cd %s; patch -p1 -i %s/patches/pycudd.patch" % (dir_path, CWD))
 
     # Select the correct Makefile to be used
     makefile = "Makefile"
@@ -359,13 +368,10 @@ def install_pycudd(options):
 
     # Build the pycudd
     # NOTE: -j is not supported by this building system
-    os.system("cd %s/cudd-2.4.2; ./setup.sh; make -f %s" % (dir_path, makefile))
-    os.system("cd %s/cudd-2.4.2; make -f %s libso" % (dir_path, makefile))
-    os.system("cd %s/pycudd; make" % dir_path)
+    os.system("make -C %s -f %s" % (dir_path, makefile))
 
     # Save the paths
-    PATHS.append("%s/pycudd" % dir_path)
-
+    PATHS.append(dir_path)
 
 
 def install_picosat(options):
@@ -375,6 +381,7 @@ def install_picosat(options):
     archive_name = "%s.tar.gz" % base_name
     archive = os.path.join(BASE_DIR, archive_name)
     dir_path = os.path.join(BASE_DIR, base_name)
+    patch_name = "picosat.patch"
 
     # Download picosat if needed
     if not os.path.exists(archive):
@@ -388,7 +395,8 @@ def install_picosat(options):
     untar(archive, BASE_DIR)
 
     # patch the distribution
-    os.system("cd %s; patch -p1 -i %s/patches/picosat.patch" % (dir_path, CWD))
+    download_patch(patch_name, "%s/picosat.patch" % dir_path)
+    os.system("cd %s; patch -p1 -i picosat.patch" % dir_path)
 
     # Build picosat
     os.system("cd %s; bash configure; make; python setup.py build" % dir_path)
@@ -398,10 +406,40 @@ def install_picosat(options):
     PATHS.append("%s/build/lib.linux-%s-%s" % (dir_path, get_architecture(), get_python_version()))
 
 
+def install_boolector(options):
+    """Installer Boolector"""
+
+    base_name =  "boolector-2.0.7-with-lingeling-azd"
+    archive_name = "%s.tar.bz2" % base_name
+    archive = os.path.join(BASE_DIR, archive_name)
+    dir_path = os.path.join(BASE_DIR, base_name)
+
+    # Download picosat if needed
+    if not os.path.exists(archive):
+        download(get_boolector_download_link(archive_name), archive)
+
+    # clear the destination directory, if any
+    if os.path.exists(dir_path):
+        os.system("rm -rf %s" % dir_path)
+
+    # Extract the picosat distribution
+    untar(archive, BASE_DIR, mode='r:bz2')
+
+    # First build
+    os.system("cd %s; make" % dir_path)
+
+    # Reconfigure and build python bindings
+    os.system("cd %s/lingeling/ ; ./configure.sh -fPIC; make" % dir_path)
+    os.system("cd %s/boolector/ ; ./configure -python; make" % dir_path)
+
+    # Save the paths
+    PATHS.append("%s/boolector" % dir_path)
+
+
 def check_install():
     """Checks which solvers are visible to pySMT."""
 
-    from pysmt.shortcuts import Solver
+    from pysmt.shortcuts import Solver, QuantifierEliminator
     from pysmt.exceptions import NoSolverAvailableError
 
     required_solver = os.environ.get("PYSMT_SOLVER")
@@ -411,15 +449,28 @@ def check_install():
         # Special case for bdd
         required_solver = "bdd"
 
-
-    for solver in ['msat', 'z3', 'cvc4', 'yices', 'bdd', 'picosat']:
+    print("Solvers:")
+    for solver in ['msat', 'z3', 'cvc4', 'yices', 'bdd', 'picosat', 'btor']:
         is_installed = False
         try:
             Solver(name=solver)
             is_installed = True
         except NoSolverAvailableError:
             is_installed = False
-        print("%s%s" % (solver.ljust(10), is_installed))
+        print("  %s%s" % (solver.ljust(10), is_installed))
+
+        if solver == required_solver and not is_installed:
+            raise Exception("Was expecting to find %s installed" % required_solver)
+
+    print("\nQuantifier Eliminators:")
+    for solver in ['msat_fm', 'msat_lw', 'z3', 'bdd']:
+        is_installed = False
+        try:
+            QuantifierEliminator(name=solver)
+            is_installed = True
+        except NoSolverAvailableError:
+            is_installed = False
+        print("  %s%s" % (solver.ljust(10), is_installed))
 
         if solver == required_solver and not is_installed:
             raise Exception("Was expecting to find %s installed" % required_solver)
@@ -439,6 +490,8 @@ def parse_options():
                         default=False, help='Install CUDD (pycudd)')
     parser.add_argument('--picosat', dest='picosat', action='store_true',
                         default=False, help='Install PicoSAT')
+    parser.add_argument('--btor', dest='btor', action='store_true',
+                        default=False, help='Install Boolector')
 
     parser.add_argument('--make-j', dest='make_j', metavar='N',
                         type=int, default=1,
@@ -511,6 +564,9 @@ def main():
 
     if options.picosat:
         install_picosat(options)
+
+    if options.btor:
+        install_boolector(options)
 
     print("\n")
     print("*" * 80)

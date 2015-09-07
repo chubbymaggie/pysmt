@@ -1,12 +1,29 @@
+#
+# This file is part of pySMT.
+#
+#   Copyright 2014 Andrea Micheli and Marco Gario
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+#
 import os
 import unittest
 
-from pysmt.shortcuts import *
 from pysmt.test import TestCase
-from pysmt.shortcuts import Symbol, And, Not, get_env, Solver
+from pysmt.shortcuts import get_env, Solver, is_valid, is_sat
+from pysmt.shortcuts import LE, LT, Real, GT, Int, Symbol, And, Not
 from pysmt.typing import BOOL, REAL, INT
-from pysmt.logics import QF_UFLIRA, QF_BOOL
-from pysmt.exceptions import SolverRedefinitionError
+from pysmt.logics import QF_UFLIRA, QF_BOOL, QF_UFBV, get_closer_logic
+from pysmt.exceptions import SolverRedefinitionError, NoLogicAvailableError
 
 from pysmt.test.examples import get_example_formulae
 
@@ -37,8 +54,10 @@ class TestGenericWrapper(TestCase):
                     path = os.path.join(BASE_DIR, "bin/" + f)
                     env.factory.add_generic_solver(name,
                                                    [path],
-                                                   [QF_UFLIRA])
+                                                   [QF_UFLIRA,
+                                                    QF_UFBV])
                     self.all_solvers.append(f)
+
 
     @unittest.skipIf(NO_WRAPPERS_AVAILABLE, "No wrapper available")
     def test_generic_wrapper_basic(self):
@@ -89,13 +108,18 @@ class TestGenericWrapper(TestCase):
     @unittest.skipIf(NO_WRAPPERS_AVAILABLE, "No wrapper available")
     def test_examples(self):
         for n in self.all_solvers:
-            for (f, validity, satisfiability, logic) in get_example_formulae():
-                if not logic.quantifier_free: continue
-                v = is_valid(f, solver_name=n, logic=logic)
-                s = is_sat(f, solver_name=n, logic=logic)
+            with Solver(name=n) as solver:
+                for (f, validity, satisfiability, logic) in \
+                    get_example_formulae():
+                    try:
+                        get_closer_logic(solver.LOGICS, logic)
+                    except NoLogicAvailableError:
+                        continue
+                    v = is_valid(f, solver_name=n, logic=logic)
+                    s = is_sat(f, solver_name=n, logic=logic)
 
-                self.assertEqual(validity, v, f)
-                self.assertEqual(satisfiability, s, f)
+                    self.assertEqual(validity, v, f)
+                    self.assertEqual(satisfiability, s, f)
 
 
     def test_redefinition(self):
@@ -129,3 +153,6 @@ class TestGenericWrapper(TestCase):
                 s.add_assertion(f)
                 res = s.solve()
                 self.assertFalse(res)
+
+if __name__ == "__main__":
+    unittest.main()

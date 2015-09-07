@@ -18,14 +18,15 @@
 from functools import partial
 
 import pysmt.operators as op
+import pysmt.exceptions
 
 
 class Walker(object):
 
     def __init__(self, env=None):
         if env is None:
-            import pysmt.shortcuts
-            env = pysmt.shortcuts.get_env()
+            import pysmt.environment
+            env = pysmt.environment.get_env()
         self.env = env
 
         self.functions = {}
@@ -50,9 +51,47 @@ class Walker(object):
         self.functions[op.ITE] = self.walk_ite
         self.functions[op.TOREAL] = self.walk_toreal
 
-        assert self.is_complete()
+        self.functions[op.BV_CONSTANT] = self.walk_bv_constant
+        self.functions[op.BV_CONCAT] = self.walk_bv_concat
+        self.functions[op.BV_EXTRACT] = self.walk_bv_extract
+        self.functions[op.BV_NOT] = self.walk_bv_not
+        self.functions[op.BV_AND] = self.walk_bv_and
+        self.functions[op.BV_OR] = self.walk_bv_or
+        self.functions[op.BV_XOR] = self.walk_bv_xor
+        self.functions[op.BV_ULT] = self.walk_bv_ult
+        self.functions[op.BV_ULE] = self.walk_bv_ule
+        self.functions[op.BV_NEG] = self.walk_bv_neg
+        self.functions[op.BV_ADD] = self.walk_bv_add
+        self.functions[op.BV_SUB] = self.walk_bv_sub
+        self.functions[op.BV_MUL] = self.walk_bv_mul
+        self.functions[op.BV_UDIV] = self.walk_bv_udiv
+        self.functions[op.BV_UREM] = self.walk_bv_urem
+        self.functions[op.BV_LSHL] = self.walk_bv_lshl
+        self.functions[op.BV_LSHR] = self.walk_bv_lshr
+        self.functions[op.BV_ROL] = self.walk_bv_rol
+        self.functions[op.BV_ROR] = self.walk_bv_ror
+        self.functions[op.BV_ZEXT] = self.walk_bv_zext
+        self.functions[op.BV_SEXT] = self.walk_bv_sext
+        self.functions[op.BV_SLT] = self.walk_bv_slt
+        self.functions[op.BV_SLE] = self.walk_bv_sle
+        self.functions[op.BV_COMP] = self.walk_bv_comp
+        self.functions[op.BV_SDIV] = self.walk_bv_sdiv
+        self.functions[op.BV_SREM] = self.walk_bv_srem
+        self.functions[op.BV_ASHR] = self.walk_bv_ashr
 
-        return
+        undefined_types = set(op.ALL_TYPES) - set(self.functions.keys())
+        assert len(undefined_types) == 0, \
+            "The following types are not defined in the generic walker: {%s}" % \
+            (", ".join(op.op_to_str(u) for u in undefined_types))
+
+
+    def set_function(self, function, *node_types):
+        """Overrides the default walking function for each of the specified
+        node_types with the given function
+        """
+        for nt in node_types:
+            self.functions[nt] = function
+
 
     def walk_error(self, formula, **kwargs):
         """ Default function for a node that is not handled by the Walker, by
@@ -66,19 +105,10 @@ class Walker(object):
                 self.functions[node_type] = partial(dwf[walker_class], self)
                 return self.functions[node_type](formula, **kwargs)
 
-        raise NotImplementedError("Was not expecting a node of type %d" %
-                                  formula.node_type())
+        node_type = formula.node_type()
+        raise pysmt.exceptions.UnsupportedOperatorError(node_type=node_type,
+                                                        expression=formula)
 
-
-    def is_complete(self, verbose=False):
-        """ Returns whether a behaviour has been specified for each FNode. """
-
-        complete = True
-        for n in op.ALL_TYPES:
-            if n not in self.functions:
-                complete = False
-                if verbose: print("Node", n,"is missing")
-        return complete
 
     # Methods to be overwritten:
     # Formula will be provided in the key-word formula
@@ -141,4 +171,85 @@ class Walker(object):
         return self.walk_error(formula, **kwargs)
 
     def walk_toreal(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_constant(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_concat(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_extract(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_not(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_and(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_or(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_xor(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_ult(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_ule(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_comp(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_neg(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_add(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_sub(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_mul(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_udiv(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_urem(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_lshl(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_lshr(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_rol(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_ror(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_zext(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_sext(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_slt(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_sle(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_sdiv(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_srem(self, formula, **kwargs):
+        return self.walk_error(formula, **kwargs)
+
+    def walk_bv_ashr(self, formula, **kwargs):
         return self.walk_error(formula, **kwargs)

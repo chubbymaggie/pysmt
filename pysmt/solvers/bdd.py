@@ -15,66 +15,96 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 #
-import warnings
 from six.moves import xrange
 
-import pycudd
+import repycudd
 
 import pysmt.logics
 
 from pysmt import typing as types
-from pysmt.solvers.solver import Solver, Converter
+from pysmt.solvers.solver import Solver, Converter, SolverOptions
 from pysmt.solvers.eager import EagerModel
 from pysmt.walkers import DagWalker
-from pysmt.decorators import clear_pending_pop
+from pysmt.decorators import clear_pending_pop, catch_conversion_error
+from pysmt.oracles import get_logic
+from pysmt.solvers.qelim import QuantifierEliminator
 
+class BddOptions(SolverOptions):
 
-class LockDdManager(object):
-    """Context class that must be used to guard any usage of pycudd. This
-    ensures that the default DdManager is the one passed at the
-    constructor.
+    ## CUDD Reordering algorithms
+    CUDD_REORDER_SAME, \
+    CUDD_REORDER_NONE, \
+    CUDD_REORDER_RANDOM, \
+    CUDD_REORDER_RANDOM_PIVOT, \
+    CUDD_REORDER_SIFT, \
+    CUDD_REORDER_SIFT_CONVERGE, \
+    CUDD_REORDER_SYMM_SIFT, \
+    CUDD_REORDER_SYMM_SIFT_CONV, \
+    CUDD_REORDER_WINDOW2, \
+    CUDD_REORDER_WINDOW3, \
+    CUDD_REORDER_WINDOW4, \
+    CUDD_REORDER_WINDOW2_CONV, \
+    CUDD_REORDER_WINDOW3_CONV, \
+    CUDD_REORDER_WINDOW4_CONV, \
+    CUDD_REORDER_GROUP_SIFT, \
+    CUDD_REORDER_GROUP_SIFT_CONV, \
+    CUDD_REORDER_ANNEALING, \
+    CUDD_REORDER_GENETIC, \
+    CUDD_REORDER_LINEAR, \
+    CUDD_REORDER_LINEAR_CONVERGE, \
+    CUDD_REORDER_LAZY_SIFT, \
+    CUDD_REORDER_EXACT = range(22)
 
-    E.g.
+    CUDD_ALL_REORDERING_ALGORITHMS = range(1, 22)
 
-    with LockDdManager(ddmanager):
-        Do something with bdds
+    def __init__(self,
+                 generate_models=True,
+                 unsat_cores_mode=None,
+                 static_ordering=None,
+                 dynamic_reordering=False,
+                 reordering_algorithm=CUDD_REORDER_SIFT):
 
-    """
-    _depth = 0
+        if unsat_cores_mode is not None:
+            # Check if, for some reason, unsat cores are
+            # required. In case, raise an error.
+            raise NotImplementedError("BddSolver does not "\
+                                      "support unsat cores")
 
-    def __init__(self, manager):
-        self.manager = manager
+        SolverOptions.__init__(self,
+                               generate_models=generate_models,
+                               unsat_cores_mode=None)
 
-    def __enter__(self):
-        current_manager = pycudd.GetDefaultDdManager()
-        assert current_manager is None or current_manager == self.manager
-        self.manager.SetDefault()
-        assert pycudd.GetDefaultDdManager() == self.manager
-        LockDdManager._depth += 1
-
-    def __exit__(self, type, value, traceback):
-        if not pycudd.GetDefaultDdManager() == self.manager:
-            warnings.warn("The default DdManager changed without a " \
-                          "context protecting it")
-        LockDdManager._depth -= 1
-        if LockDdManager._depth == 0:
-            pycudd.ResetDefaultDdManager()
-
+        self.static_ordering = static_ordering
+        self.dynamic_reordering = dynamic_reordering
+        self.reordering_algorithm = reordering_algorithm
 
 
 class BddSolver(Solver):
     LOGICS = [ pysmt.logics.QF_BOOL, pysmt.logics.BOOL ]
 
-    def __init__(self, environment, logic, options=None):
+    def __init__(self, environment, logic, user_options):
         Solver.__init__(self,
                         environment=environment,
                         logic=logic,
-                        options=options)
+                        user_options=user_options)
 
         self.mgr = environment.formula_manager
-        self.ddmanager = pycudd.DdManager()
+        self.ddmanager = repycudd.DdManager()
         self.converter = BddConverter(environment=self.environment,
                                       ddmanager=self.ddmanager)
+
+        # Impose initial ordering
+        if self.options.static_ordering is not None:
+            for var in self.options.static_ordering:
+                if not var.is_symbol(types.BOOL):
+                    raise ValueError("The BDD static ordering must be a " \
+                                     "list of Boolean variables")
+                self.declare_variable(var)
+
+        if self.options.dynamic_reordering:
+            self.ddmanager.AutodynEnable(self.options.reordering_algorithm)
+        else:
+            self.ddmanager.AutodynDisable()
 
         # This stack keeps a pair (Expr, Bdd), with the semantics that
         # the bdd at the i-th element of the list contains the bdd of
@@ -85,6 +115,14 @@ class BddSolver(Solver):
 
         self.backtrack = []
         self.latest_model = None
+
+    def get_default_options(self, logic=None, user_options=None):
+        if user_options is not None:
+            #pylint: disable=star-args
+            return BddOptions(**user_options)
+        else:
+            return BddOptions()
+
 
     @clear_pending_pop
     def reset_assertions(self):
@@ -111,8 +149,7 @@ class BddSolver(Solver):
             if bdd is None:
                 bdd_expr = self.converter.convert(expr)
                 _, previous_bdd = self.assertions_stack[i-1]
-                with LockDdManager(self.ddmanager):
-                    new_bdd = previous_bdd.And(bdd_expr)
+                new_bdd = self.ddmanager.And(previous_bdd, bdd_expr)
                 self.assertions_stack[i] = (expr, new_bdd)
 
         _, current_state = self.assertions_stack[-1]
@@ -133,18 +170,20 @@ class BddSolver(Solver):
         # DdManager. This would make it possible to apply other
         # operations on the model (e.g., enumeration) in a simple way.
         if self.latest_model is None:
-            with LockDdManager(self.ddmanager):
-                _, current_state = self.assertions_stack[-1]
-                assert current_state is not None, "solve() should be called before get_model()"
-                # Build ddArray of variables
-                var_array = self.converter.get_all_vars_array()
-                minterm_set = current_state.PickOneMinterm(var_array, len(var_array))
-                minterm = next(iter(minterm_set))
-                assignment = {}
-                for i, node in enumerate(var_array):
-                    value = self.mgr.Bool(minterm[i] == 1)
-                    key = self.converter.idx2var[node.NodeReadIndex()]
-                    assignment[key] = value
+            _, current_state = self.assertions_stack[-1]
+            assert current_state is not None, "solve() should be called before get_model()"
+            # Build ddArray of variables
+            var_array = self.converter.get_all_vars_array()
+            minterm_set = self.ddmanager.PickOneMinterm(current_state,
+                                                        var_array,
+                                                        len(var_array))
+            minterm = next(repycudd.ForeachCubeIterator(self.ddmanager,
+                                                        minterm_set))
+            assignment = {}
+            for i, node in enumerate(var_array):
+                value = self.mgr.Bool(minterm[i] == 1)
+                key = self.converter.idx2var[node.NodeReadIndex()]
+                assignment[key] = value
 
             self.latest_model = EagerModel(assignment=assignment,
                                            environment=self.environment)
@@ -175,7 +214,7 @@ class BddConverter(Converter, DagWalker):
         self.environment = environment
         self.fmgr = self.environment.formula_manager
         self.ddmanager = ddmanager
-        # Note: Nodes in pycudd are not shared, but they overload all
+        # Note: Nodes in repycudd are not shared, but they overload all
         # methods to perform comparison. This means that for two
         # wrappers for the variable x, we have that id(x) != id(x1)
         # but x == x1.  Nevertheless, we need to store the ids, since
@@ -184,166 +223,161 @@ class BddConverter(Converter, DagWalker):
         # use the ids.
         self.idx2var = {}
         self.var2node = {}
+        self.back_memoization = {}
 
+    @catch_conversion_error
     def convert(self, formula):
         """Convert a PySMT formula into a BDD."""
-        with LockDdManager(self.ddmanager):
-            return self.walk(formula)
+        return self.walk(formula)
 
     def back(self, bdd_expr):
-        with LockDdManager(self.ddmanager):
-            return self.bdd_to_expr3(bdd_expr).simplify()
+        return self._walk_back(bdd_expr, self.fmgr).simplify()
 
     def get_all_vars_array(self):
         # NOTE: This way of building the var_array does not look
         #       robust.  There might be an issue if variables are
         #       added and the order of enumeration of the dictionary
         #       changes and we rely on this order outside of this class.
-        with LockDdManager(self.ddmanager):
-            var_array = pycudd.DdArray(len(self.idx2var))
-            for i, node_idx in enumerate(self.idx2var):
-                var_array[i] = self.ddmanager[node_idx]
-            return var_array
+        var_array = repycudd.DdArray(self.ddmanager, len(self.idx2var))
+        for i, node_idx in enumerate(self.idx2var):
+            var_array[i] = self.ddmanager[node_idx]
+        return var_array
 
     def cube_from_var_list(self, var_list):
-        with LockDdManager(self.ddmanager):
-            indices = pycudd.IntArray(len(var_list))
-            for i, v in enumerate(var_list):
-                indices[i] = self.var2node[v].NodeReadIndex()
-            cube = self.ddmanager.IndicesToCube(indices, len(var_list))
-            return cube
+        indices = repycudd.IntArray(len(var_list))
+        for i, v in enumerate(var_list):
+            indices[i] = self.var2node[v].NodeReadIndex()
+        cube = self.ddmanager.IndicesToCube(indices, len(var_list))
+        return cube
 
     def declare_variable(self, var):
         if not var.is_symbol(type_=types.BOOL): raise TypeError
         if var not in self.var2node:
-            with LockDdManager(self.ddmanager):
-                node = self.ddmanager.NewVar()
-                self.idx2var[node.NodeReadIndex()] = var
-                self.var2node[var] = node
+            node = self.ddmanager.NewVar()
+            self.idx2var[node.NodeReadIndex()] = var
+            self.var2node[var] = node
 
-    def walk_and(self, formula, args):
+    def walk_and(self, formula, args, **kwargs):
         res = args[0]
         for a in args[1:]:
-            res = res.And(a)
+            res = self.ddmanager.And(a, res)
         return res
 
-    def walk_or(self, formula, args):
+    def walk_or(self, formula, args, **kwargs):
         res = args[0]
         for a in args[1:]:
-            res = res.Or(a)
+            res = self.ddmanager.Or(res,a)
         return res
 
-    def walk_not(self, formula, args):
-        return args[0].Not()
+    def walk_not(self, formula, args, **kwargs):
+        return self.ddmanager.Not(args[0])
 
-    def walk_symbol(self, formula, args):
+    def walk_symbol(self, formula, **kwargs):
         if not formula.is_symbol(types.BOOL): raise TypeError
         if formula not in self.var2node:
             self.declare_variable(formula)
         res = self.var2node[formula]
         return res
 
-    def walk_implies(self, formula, args):
+    def walk_implies(self, formula, args, **kwargs):
         lhs, rhs = args
-        return lhs.Not().Or(rhs)
+        return self.ddmanager.Or(lhs.Not(), rhs)
 
-    def walk_iff(self, formula, args):
+    def walk_iff(self, formula, args, **kwargs):
         lhs, rhs = args
-        # Double-check this
-        pos = lhs.And(rhs)
-        neg = lhs.Not().And(rhs.Not())
-        return pos.Or(neg)
+        pos = self.ddmanager.And(lhs, rhs)
+        neg = self.ddmanager.And(lhs.Not(), rhs.Not())
+        return self.ddmanager.Or(pos, neg)
 
-    def walk_forall(self, formula, args):
+    def walk_forall(self, formula, args, **kwargs):
         f = args[0]
         cube = self.cube_from_var_list(formula.quantifier_vars())
-        res = f.UnivAbstract(cube)
+        res = self.ddmanager.UnivAbstract(f, cube)
         return res
 
-    def walk_exists(self, formula, args):
+    def walk_exists(self, formula, args, **kwargs):
         f = args[0]
         cube = self.cube_from_var_list(formula.quantifier_vars())
-        res = f.ExistAbstract(cube)
+        res = self.ddmanager.ExistAbstract(f, cube)
         return res
 
-    def walk_bool_constant(self, formula, args):
+    def walk_bool_constant(self, formula, **kwargs):
         if formula.is_true():
             return self.ddmanager.One()
         else:
             return self.ddmanager.Zero()
 
-    def bdd_to_expr(self, bdd):
-        res = None
-        if bdd == self.ddmanager.Zero():
-            res = self.fmgr.Bool(False)
-        elif bdd == self.ddmanager.One():
-            res = self.fmgr.Bool(True)
-        else:
-            var = self.idx2var[bdd.NodeReadIndex()]
-            t = self.fmgr.Implies(var, self.bdd_to_expr(bdd.T()))
-            e = self.fmgr.Implies(self.fmgr.Not(var), self.bdd_to_expr(bdd.E()))
-            # (v -> t) /\ (!v -> e)
-            res = self.fmgr.And(t, e)
 
-            if bdd.IsComplement():
-                res = self.fmgr.Not(res)
+    def _walk_back(self, bdd, mgr):
+        stack = [bdd]
+        while len(stack) > 0:
+            current = stack.pop()
+            # If the node haven't been explored yet, it is not in back_memoization,
+            # If back_memoization contains None, we are exploring the children
+            # Otherwise, it contains the pySMT expression corresponding to the node
+            if current not in self.back_memoization:
+                self.back_memoization[current] = None
+                stack.append(current)
+                if current != self.ddmanager.Zero() and \
+                   current != self.ddmanager.One():
+                    t = current.T()
+                    e = current.E()
+                    stack.append(t)
+                    stack.append(e)
+            elif self.back_memoization[current] is None:
+                if current == self.ddmanager.Zero():
+                    res = mgr.FALSE()
+                elif current == self.ddmanager.One():
+                    res = mgr.TRUE()
+                else:
+                    var = self.idx2var[current.NodeReadIndex()]
+                    t = current.T()
+                    e = current.E()
+                    expr_t = self.back_memoization[t]
+                    expr_e = self.back_memoization[e]
 
-        return res
+                    if current.IsComplement():
+                        # (v /\ !t) \/ (!v /\ !e)
+                        #     P            N
+                        p = mgr.And(var, mgr.Not(expr_t))
+                        n = mgr.And(mgr.Not(var), mgr.Not(expr_e))
+                        res = mgr.Or(p, n)
+                    else:
+                        # (v /\ t) \/ (!v /\ e)
+                        #    P             N
+                        p = mgr.And(var, expr_t)
+                        n = mgr.And(mgr.Not(var), expr_e)
+                        res = mgr.Or(p, n)
 
-
-    def bdd_to_expr2(self, bdd):
-        res = None
-        if bdd == self.ddmanager.Zero():
-            res = self.fmgr.Bool(False)
-        elif bdd == self.ddmanager.One():
-            res = self.fmgr.Bool(True)
-        else:
-            var = self.idx2var[bdd.NodeReadIndex()]
-
-            t = self.bdd_to_expr2(bdd.T())
-            e = self.bdd_to_expr2(bdd.E())
-            not_t = self.fmgr.Not(t)
-            not_e = self.fmgr.Not(e)
-
-            if bdd.IsComplement():
-                # (v /\ !t) \/ (!v /\ !e)
-                #     P            N
-                p = self.fmgr.And(var, not_t)
-                n = self.fmgr.And(self.fmgr.Not(var),
-                                  not_e)
-                res = self.fmgr.Or(p, n)
+                self.back_memoization[current] = res
             else:
-                # (v /\ t) \/ (!v /\ e)
-                #    P             N
-                p = self.fmgr.And(var, t)
-                n = self.fmgr.And(self.fmgr.Not(var), e)
-                res = self.fmgr.Or(p, n)
+                # we already visited the node, nothing else to do
+                pass
+        return self.back_memoization[bdd]
 
-        return res
+# EOC BddConverter
 
 
-    def bdd_to_expr3(self, bdd, invert=False):
-        """Convert a bdd into an expression and push negation."""
+class BddQuantifierEliminator(QuantifierEliminator):
 
-        res = None
-        if bdd == self.ddmanager.Zero():
-            res = self.fmgr.Bool(invert)
-        elif bdd == self.ddmanager.One():
-            res = self.fmgr.Bool(not invert)
-        else:
-            var = self.idx2var[bdd.NodeReadIndex()]
+    LOGICS = [pysmt.logics.BOOL]
 
-            if (bdd.IsComplement() and not invert) or \
-               (not bdd.IsComplement() and invert):
-                ne = self.bdd_to_expr3(bdd.E(), not invert)
-                nt = self.bdd_to_expr3(bdd.T(), not invert)
-                res = self.fmgr.Or(self.fmgr.And(var, nt),
-                                   self.fmgr.And(self.fmgr.Not(var), ne))
-            else:
-                t = self.bdd_to_expr3(bdd.T(), invert)
-                e = self.bdd_to_expr3(bdd.E(), invert)
-                res = self.fmgr.Or(self.fmgr.And(var, t),
-                                   self.fmgr.And(self.fmgr.Not(var), e))
-        return res
+    def __init__(self, environment, logic=None):
+        self.environment = environment
+        self.logic = logic
+        self.ddmanager = repycudd.DdManager()
+        self.converter = BddConverter(environment=environment,
+                                      ddmanager=self.ddmanager)
 
- # EOC BddConverter
+
+    def eliminate_quantifiers(self, formula):
+        logic = get_logic(formula, self.environment)
+        if not logic <= pysmt.logics.BOOL:
+            raise NotImplementedError("BDD-based quantifier elimination only "\
+                                      "supports pure-boolean formulae."\
+                                      "(detected logic is: %s)" % str(logic))
+
+        bdd = self.converter.convert(formula)
+        pysmt_res = self.converter.back(bdd)
+
+        return pysmt_res

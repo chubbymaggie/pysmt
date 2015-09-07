@@ -25,6 +25,8 @@ from pysmt.typing import INT, BOOL, REAL, FunctionType
 from pysmt.walkers import TreeWalker, DagWalker, IdentityDagWalker
 from pysmt.test import TestCase
 from pysmt.formula import FormulaManager
+from pysmt.test.examples import get_example_formulae
+from pysmt.exceptions import UnsupportedOperatorError
 
 from six.moves import xrange
 
@@ -82,25 +84,21 @@ class TestWalkers(TestCase):
         varA = Symbol("At", INT)
 
         dag_walker = DagWalker()
-        with self.assertRaises(NotImplementedError):
+        with self.assertRaises(UnsupportedOperatorError):
             dag_walker.walk(varA)
 
         tree_walker = TreeWalker()
-        with self.assertRaises(NotImplementedError):
+        with self.assertRaises(UnsupportedOperatorError):
             tree_walker.walk(varA)
 
 
     def test_walker_is_complete(self):
-        tree_walker = TreeWalker()
-        self.assertTrue(tree_walker.is_complete(verbose=True))
+        op.ALL_TYPES.append(-1)
+        with self.assertRaises(AssertionError):
+            TreeWalker()
+        op.ALL_TYPES.remove(-1)
 
-        tree_walker.functions = dict((x, tree_walker.walk_skip)
-                                     for x in op.ALL_TYPES
-                                     if x is not op.AND)
-        self.assertFalse(tree_walker.is_complete())
-
-
-    def test_identity_walker(self):
+    def test_identity_walker_simple(self):
 
         def walk_and_to_or(formula, args, **kwargs):
             return Or(args)
@@ -110,8 +108,8 @@ class TestWalkers(TestCase):
 
         walker = IdentityDagWalker(env=get_env())
 
-        walker.functions[op.AND] = walk_and_to_or
-        walker.functions[op.OR] = walk_or_to_and
+        walker.set_function(walk_and_to_or, op.AND)
+        walker.set_function(walk_or_to_and, op.OR)
 
         x, y, z = Symbol('x'), Symbol('y'), Symbol('z')
 
@@ -125,6 +123,11 @@ class TestWalkers(TestCase):
         result = walker.walk(alternation)
         self.assertEqual(result, expected)
 
+    def test_identity_dag_walker(self):
+        idw = IdentityDagWalker()
+        for (f, _, _, _) in get_example_formulae():
+            rebuilt = idw.walk(f)
+            self.assertTrue(rebuilt == f, "Rebuilt formula is not identical")
 
     def test_substitution_on_quantifiers(self):
         x, y = FreshSymbol(), FreshSymbol()

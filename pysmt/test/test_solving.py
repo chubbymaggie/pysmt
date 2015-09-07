@@ -20,13 +20,15 @@ from six.moves import xrange
 
 import pysmt.operators as op
 from pysmt.shortcuts import Symbol, FreshSymbol, And, Not, GT, Function, Plus
-from pysmt.shortcuts import Bool, TRUE, Real, LE, FALSE, Or, Equals
+from pysmt.shortcuts import Bool, TRUE, Real, LE, FALSE, Or, Equals, Implies
 from pysmt.shortcuts import Solver
-from pysmt.shortcuts import is_sat, is_valid, get_env, get_model
+from pysmt.shortcuts import get_env, get_model, is_valid, is_sat, get_implicant
 from pysmt.typing import BOOL, REAL, FunctionType
 from pysmt.test import TestCase, skipIfSolverNotAvailable, skipIfNoSolverForLogic
 from pysmt.test.examples import get_example_formulae
-from pysmt.exceptions import SolverReturnedUnknownResultError, InternalSolverError
+from pysmt.exceptions import (SolverReturnedUnknownResultError,
+                              InternalSolverError, NoSolverAvailableError,
+                              ConvertExpressionError)
 from pysmt.logics import QF_UFLIRA, QF_BOOL, QF_LRA, AUTO
 
 class TestBasic(TestCase):
@@ -57,12 +59,12 @@ class TestBasic(TestCase):
         f = And(varA, Not(varB))
         g = f.substitute({varB:varA})
 
-        res = is_sat(g, logic=QF_BOOL)
-        self.assertFalse(res, "Formula was expected to be UNSAT")
+        self.assertUnsat(g, logic=QF_BOOL,
+                         msg="Formula was expected to be UNSAT")
 
         for solver in get_env().factory.all_solvers():
-            res = is_sat(g, solver_name=solver)
-            self.assertFalse(res, "Formula was expected to be UNSAT")
+            self.assertUnsat(g, solver_name=solver,
+                             msg="Formula was expected to be UNSAT")
 
     # This test works only if is_sat requests QF_BOOL as logic, since
     # that is the only logic handled by BDDs
@@ -72,8 +74,7 @@ class TestBasic(TestCase):
         varB = Symbol("B", BOOL)
 
         f = And(varA, Not(varB))
-        res = is_sat(f, logic=AUTO)
-        self.assertTrue(res)
+        self.assertSat(f, logic=AUTO)
 
     @skipIfSolverNotAvailable("bdd")
     def test_default_logic_in_is_sat(self):
@@ -85,8 +86,7 @@ class TestBasic(TestCase):
         varB = Symbol("B", BOOL)
 
         f = And(varA, Not(varB))
-        res = is_sat(f)
-        self.assertTrue(res)
+        self.assertSat(f)
 
 
     @skipIfNoSolverForLogic(QF_BOOL)
@@ -123,6 +123,31 @@ class TestBasic(TestCase):
             self.assertTrue(res.get_value(varX) == Real(8))
 
     @skipIfNoSolverForLogic(QF_BOOL)
+    def test_get_implicant_unsat(self):
+        varA = Symbol("A", BOOL)
+        varB = Symbol("B", BOOL)
+
+        f = And(varA, Not(varB))
+        g = f.substitute({varB:varA})
+
+        for solver in get_env().factory.all_solvers(logic=QF_BOOL):
+            res = get_implicant(g, solver_name=solver)
+            self.assertIsNone(res, "Formula was expected to be UNSAT")
+
+    @skipIfNoSolverForLogic(QF_LRA)
+    def test_get_implicant_sat(self):
+        varA = Symbol("A", BOOL)
+        varX = Symbol("X", REAL)
+
+        f = And(varA, Equals(varX, Real(8)))
+
+        for solver in get_env().factory.all_solvers(logic=QF_LRA):
+            res = get_implicant(f, solver_name=solver)
+            self.assertIsNotNone(res, "Formula was expected to be SAT")
+            self.assertValid(Implies(res, f), logic=QF_LRA)
+
+
+    @skipIfNoSolverForLogic(QF_BOOL)
     def test_get_py_value(self):
         varA = Symbol("A", BOOL)
 
@@ -135,8 +160,8 @@ class TestBasic(TestCase):
     def test_examples_msat(self):
         for (f, validity, satisfiability, logic) in get_example_formulae():
             if not logic.quantifier_free: continue
-            v = is_valid(f, solver_name='msat')
-            s = is_sat(f, solver_name='msat')
+            v = is_valid(f, solver_name='msat', logic=logic)
+            s = is_sat(f, solver_name='msat', logic=logic)
 
             self.assertEqual(validity, v, f)
             self.assertEqual(satisfiability, s, f)
@@ -146,8 +171,8 @@ class TestBasic(TestCase):
         for (f, validity, satisfiability, logic) in get_example_formulae():
             try:
                 if not logic.quantifier_free: continue
-                v = is_valid(f, solver_name='cvc4')
-                s = is_sat(f, solver_name='cvc4')
+                v = is_valid(f, solver_name='cvc4', logic=logic)
+                s = is_sat(f, solver_name='cvc4', logic=logic)
 
                 self.assertEqual(validity, v, f)
                 self.assertEqual(satisfiability, s, f)
@@ -160,8 +185,8 @@ class TestBasic(TestCase):
     def test_examples_yices(self):
         for (f, validity, satisfiability, logic) in get_example_formulae():
             if not logic.quantifier_free: continue
-            v = is_valid(f, solver_name='yices')
-            s = is_sat(f, solver_name='yices')
+            v = is_valid(f, solver_name='yices', logic=logic)
+            s = is_sat(f, solver_name='yices', logic=logic)
 
             self.assertEqual(validity, v, f)
             self.assertEqual(satisfiability, s, f)
@@ -171,30 +196,33 @@ class TestBasic(TestCase):
     def do_model(self, solver_name):
         for (f, _, satisfiability, logic) in get_example_formulae():
             if satisfiability and not logic.theory.uninterpreted and logic.quantifier_free:
-                with Solver(name=solver_name) as s:
-                    s.add_assertion(f)
+                try:
+                    with Solver(name=solver_name, logic=logic) as s:
+                        s.add_assertion(f)
 
-                    check = s.solve()
-                    self.assertTrue(check)
+                        check = s.solve()
+                        self.assertTrue(check)
 
-                    # Ask single values to the solver
-                    subs = {}
-                    for d in f.get_free_variables():
-                        m = s.get_value(d)
-                        subs[d] = m
+                        # Ask single values to the solver
+                        subs = {}
+                        for d in f.get_free_variables():
+                            m = s.get_value(d)
+                            subs[d] = m
 
-                    simp = f.substitute(subs).simplify()
-                    self.assertEqual(simp, TRUE())
+                        simp = f.substitute(subs).simplify()
+                        self.assertEqual(simp, TRUE(), "%s -- %s :> %s" % (f, subs, simp))
 
-                    # Ask the eager model
-                    subs = {}
-                    model = s.get_model()
-                    for d in f.get_free_variables():
-                        m = model.get_value(d)
-                        subs[d] = m
+                        # Ask the eager model
+                        subs = {}
+                        model = s.get_model()
+                        for d in f.get_free_variables():
+                            m = model.get_value(d)
+                            subs[d] = m
 
-                    simp = f.substitute(subs).simplify()
-                    self.assertEqual(simp, TRUE())
+                        simp = f.substitute(subs).simplify()
+                        self.assertEqual(simp, TRUE())
+                except NoSolverAvailableError:
+                    pass
 
     @skipIfSolverNotAvailable("cvc4")
     def test_model_cvc4(self):
@@ -208,11 +236,20 @@ class TestBasic(TestCase):
     def test_model_msat(self):
         self.do_model("msat")
 
+    @skipIfSolverNotAvailable("yices")
+    def test_model_yices(self):
+        self.do_model("yices")
+
+    @skipIfSolverNotAvailable("picosat")
+    def test_model_picosat(self):
+        self.do_model("picosat")
+
+
     @skipIfSolverNotAvailable("z3")
     def test_examples_z3(self):
-        for (f, validity, satisfiability, _) in get_example_formulae():
-            v = is_valid(f, solver_name='z3')
-            s = is_sat(f, solver_name='z3')
+        for (f, validity, satisfiability, logic) in get_example_formulae():
+            v = is_valid(f, solver_name='z3', logic=logic)
+            s = is_sat(f, solver_name='z3', logic=logic)
 
             self.assertEqual(validity, v, f)
             self.assertEqual(satisfiability, s, f)
@@ -223,9 +260,19 @@ class TestBasic(TestCase):
                 v = is_valid(f, logic=logic)
                 s = is_sat(f, logic=logic)
 
-                self.assertEqual(validity, v, f)
-                self.assertEqual(satisfiability, s, f)
+                self.assertEqual(validity, v, f.serialize())
+                self.assertEqual(satisfiability, s, f.serialize())
 
+
+    def test_examples_get_implicant(self):
+        for (f, _, satisfiability, logic) in get_example_formulae():
+            if logic.quantifier_free and \
+               (len(get_env().factory.all_solvers(logic=logic)) > 0):
+                f_i = get_implicant(f, logic=logic)
+                if satisfiability:
+                    self.assertValid(Implies(f_i, f), logic=logic, msg=f)
+                else:
+                    self.assertIsNone(f_i)
 
     def test_solving_under_assumption(self):
         v1, v2 = [FreshSymbol() for _ in xrange(2)]
@@ -345,7 +392,7 @@ class TestBasic(TestCase):
 
         # Replace the function used to compute the Plus()
         # with one that returns a msat_error
-        new_converter.functions[op.PLUS] = walk_plus
+        new_converter.set_function(walk_plus, op.PLUS)
 
         r, s = FreshSymbol(REAL), FreshSymbol(REAL)
         f1 = GT(r, s)
@@ -356,6 +403,22 @@ class TestBasic(TestCase):
 
         with self.assertRaises(InternalSolverError):
             new_converter.convert(f2)
+
+    @skipIfNoSolverForLogic(QF_BOOL)
+    def test_conversion_error(self):
+        from pysmt.type_checker import SimpleTypeChecker
+        add_dwf = get_env().add_dynamic_walker_function
+        create_node = get_env().formula_manager.create_node
+
+        # Create a node that is not supported by any solver
+        idx = op.new_node_type()
+        x = Symbol("x")
+        add_dwf(idx, SimpleTypeChecker, SimpleTypeChecker.walk_bool_to_bool)
+        invalid_node = create_node(idx, args=(x,x))
+
+        for sname in get_env().factory.all_solvers(logic=QF_BOOL):
+            with self.assertRaises(ConvertExpressionError):
+                is_sat(invalid_node, solver_name=sname)
 
 
 if __name__ == '__main__':

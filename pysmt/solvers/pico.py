@@ -22,8 +22,8 @@ import pysmt.logics
 from pysmt import typing as types
 from pysmt.solvers.solver import Solver
 from pysmt.solvers.eager import EagerModel
-from pysmt.cnf import CNFizer
-from pysmt.decorators import clear_pending_pop
+from pysmt.rewritings import CNFizer
+from pysmt.decorators import clear_pending_pop, catch_conversion_error
 
 from six.moves import xrange
 from six import iteritems
@@ -33,11 +33,11 @@ class PicosatSolver(Solver):
 
     LOGICS = [ pysmt.logics.QF_BOOL ]
 
-    def __init__(self, environment, logic, options=None):
+    def __init__(self, environment, logic, user_options):
         Solver.__init__(self,
                         environment=environment,
                         logic=logic,
-                        options=options)
+                        user_options=user_options)
 
         self.mgr = environment.formula_manager
         self.pico = picosat.picosat_init()
@@ -69,27 +69,55 @@ class PicosatSolver(Solver):
         # no need to declare variables
         pass
 
+    def _get_pico_lit(self, lit):
+        mult = 1
+        var = lit
+        if lit.is_not():
+            mult = -1
+            var = lit.arg(0)
+
+        vid = self._get_var_id(var)
+        return vid * mult
+
+
     @clear_pending_pop
+    @catch_conversion_error
     def add_assertion(self, formula, named=None):
-        cnf = self.cnfizer.convert(formula)
+        # First, we get rid of True/False constants
+        formula = formula.simplify()
+        if formula.is_false():
+            picosat.picosat_add(self.pico, 0)
+        elif not formula.is_true():
+            cnf = self.cnfizer.convert(formula)
+            self._add_cnf_assertion(cnf)
+
+    def _add_cnf_assertion(self, cnf):
         for clause in cnf:
             for lit in clause:
-                mult = 1
-                var = lit
-                if lit.is_not():
-                    mult = -1
-                    var = lit.arg(0)
-
-                vid = self._get_var_id(var)
-                picosat.picosat_add(self.pico, mult * vid)
+                v = self._get_pico_lit(lit)
+                picosat.picosat_add(self.pico, v)
             picosat.picosat_add(self.pico, 0)
 
     @clear_pending_pop
+    @catch_conversion_error
     def solve(self, assumptions=None):
         if assumptions is not None:
-            self.push()
-            self.add_assertion(self.mgr.And(assumptions))
-            self.pending_pop = True
+            cnf = []
+            for a in assumptions:
+                cnf += self.cnfizer.convert(a)
+
+            missing = []
+            for clause in cnf:
+                if len(clause) == 1:
+                    v = self._get_pico_lit(next(iter(clause)))
+                    picosat.picosat_assume(self.pico, v)
+                else:
+                    missing.append(clause)
+
+            if len(missing) > 0:
+                self.push()
+                self._add_cnf_assertion(missing)
+                self.pending_pop = True
 
         res = picosat.picosat_sat(self.pico, -1)
         if res == picosat.PICOSAT_SATISFIABLE:

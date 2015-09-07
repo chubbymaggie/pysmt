@@ -17,6 +17,7 @@
 #
 from pysmt.walkers.tree import Walker
 
+
 class DagWalker(Walker):
     """DagWalker treats the formula as a DAG and performs memoization of the
     intermediate results.
@@ -31,8 +32,6 @@ class DagWalker(Walker):
     :func _get_key needs to be defined if additional arguments via
     keywords need to be shared. This function should return the key to
     be used in memoization. See substituter for an example.
-
-
     """
 
     def __init__(self, env=None, invalidate_memoization=False):
@@ -44,16 +43,15 @@ class DagWalker(Walker):
         self.memoization = {}
         self.invalidate_memoization = invalidate_memoization
         self.stack = []
-
-        # This flag is left to enable the recursive version of the walker.
-        # It will be removed after merging of this new feature.
-        self.enable_recursion = False
         return
+
+    def _get_children(self, formula):
+        return formula.args()
 
     def _push_with_children_to_stack(self, formula, **kwargs):
         """Add children to the stack."""
         self.stack.append((True, formula))
-        for s in formula.get_sons():
+        for s in self._get_children(formula):
             # Add only if not memoized already
             key = self._get_key(s, **kwargs)
             if key not in self.memoization:
@@ -73,7 +71,7 @@ class DagWalker(Walker):
                 f = self.walk_error
 
             args = [self.memoization[self._get_key(s, **kwargs)] \
-                    for s in formula.get_sons()]
+                    for s in self._get_children(formula)]
             self.memoization[key] = f(formula, args=args, **kwargs)
         else:
             pass
@@ -105,10 +103,7 @@ class DagWalker(Walker):
         if formula in self.memoization:
             return self.memoization[formula]
 
-        if self.enable_recursion:
-            res = self._memoize_and_walk(formula, **kwargs)
-        else:
-            res = self.iter_walk(formula, **kwargs)
+        res = self.iter_walk(formula, **kwargs)
 
         if self.invalidate_memoization:
             self.memoization.clear()
@@ -120,54 +115,33 @@ class DagWalker(Walker):
         raise NotImplementedError("DagWalker should redefine '_get_key'" +
                                   " when using keywords arguments")
 
-
-    def _memoize_and_walk(self, formula, **kwargs):
-        key = self._get_key(formula, **kwargs)
-        if key in self.memoization:
-            return self.memoization[key]
-
-        res = self._do_walk(formula, **kwargs)
-
-        self.memoization[key] = res
-        return res
-
-    def _do_walk(self, formula, **kwargs):
-        assert self.enable_recursion
-
-        # Postfix
-        args = [self._memoize_and_walk(s, **kwargs) for s in formula.get_sons()]
-
-        try:
-            f = self.functions[formula.node_type()]
-        except KeyError:
-            f = self.walk_error
-
-        kwargs["args"] = args
-        res = f(formula, **kwargs)
-
-        return res
-
     def walk_true(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
         """ Returns True, independently from the children's value."""
         return True
 
     def walk_false(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
         """ Returns False, independently from the children's value."""
         return False
 
     def walk_none(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
         """ Returns None, independently from the children's value."""
         return None
 
-    def walk_identity(self, formula, args, **kwargs):
+    def walk_identity(self, formula, **kwargs):
+        #pylint: disable=unused-argument
         """ Returns formula, independently from the childrens's value."""
         return formula
 
     def walk_any(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
         """ Returns True if any of the children returned True. """
         return any(args)
 
     def walk_all(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
         """ Returns True if all the children returned True. """
         return all(args)
 

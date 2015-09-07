@@ -28,7 +28,7 @@ import pysmt.walkers as walkers
 import pysmt.operators as op
 import pysmt.shortcuts
 
-from pysmt.typing import BOOL, REAL, INT
+from pysmt.typing import BOOL, REAL, INT, BVType
 
 
 class SimpleTypeChecker(walkers.DagWalker):
@@ -36,29 +36,30 @@ class SimpleTypeChecker(walkers.DagWalker):
     def __init__(self, env=None):
         walkers.DagWalker.__init__(self, env=env)
 
-        self.functions[op.AND] = self.walk_bool_to_bool
-        self.functions[op.OR] = self.walk_bool_to_bool
-        self.functions[op.NOT] = self.walk_bool_to_bool
-        self.functions[op.IMPLIES] = self.walk_bool_to_bool
-        self.functions[op.IFF] = self.walk_bool_to_bool
-        self.functions[op.SYMBOL] = self.walk_symbol
-        self.functions[op.EQUALS] = self.walk_math_relation
-        self.functions[op.LE] = self.walk_math_relation
-        self.functions[op.LT] = self.walk_math_relation
-        self.functions[op.REAL_CONSTANT] = self.walk_identity_real
-        self.functions[op.BOOL_CONSTANT] = self.walk_identity_bool
-        self.functions[op.INT_CONSTANT] = self.walk_identity_int
-        self.functions[op.FORALL] = self.walk_quantifier
-        self.functions[op.EXISTS] = self.walk_quantifier
-        self.functions[op.PLUS] = self.walk_realint_to_realint
-        self.functions[op.MINUS] = self.walk_realint_to_realint
-        self.functions[op.TIMES] = self.walk_realint_to_realint
-        self.functions[op.ITE] = self.walk_ite
-        self.functions[op.TOREAL] = self.walk_int_to_real
-        self.functions[op.FUNCTION] = self.walk_function
+        self.set_function(self.walk_bool_to_bool, op.AND, op.OR, op.NOT,
+                          op.IMPLIES, op.IFF)
+        self.set_function(self.walk_symbol, op.SYMBOL)
+        self.set_function(self.walk_math_relation, op.EQUALS, op.LE, op.LT)
+        self.set_function(self.walk_identity_real, op.REAL_CONSTANT)
+        self.set_function(self.walk_identity_bool, op.BOOL_CONSTANT)
+        self.set_function(self.walk_identity_int, op.INT_CONSTANT)
+        self.set_function(self.walk_quantifier, op.FORALL, op.EXISTS)
+        self.set_function(self.walk_realint_to_realint, op.PLUS, op.MINUS,
+                          op.TIMES)
+        self.set_function(self.walk_ite, op.ITE)
+        self.set_function(self.walk_int_to_real, op.TOREAL)
+        self.set_function(self.walk_function, op.FUNCTION)
 
-        assert self.is_complete(verbose=True)
-
+        self.set_function(self.walk_identity_bv, op.BV_CONSTANT)
+        self.set_function(self.walk_bv_to_bool, op.BV_ULT, op.BV_ULE, op.BV_SLT,
+                          op.BV_SLE)
+        self.set_function(self.walk_bv_to_bv, op.BV_ADD, op.BV_SUB, op.BV_NOT,
+                          op.BV_AND, op.BV_OR, op.BV_XOR, op.BV_NEG, op.BV_MUL,
+                          op.BV_UDIV, op.BV_UREM, op.BV_LSHL, op.BV_LSHR,
+                          op.BV_SDIV, op.BV_SREM, op.BV_ASHR)
+        self.set_function(self.walk_bv_rotate, op.BV_ROL, op.BV_ROR)
+        self.set_function(self.walk_bv_extend, op.BV_ZEXT, op.BV_SEXT)
+        self.set_function(self.walk_bv_comp, op.BV_COMP)
         self.be_nice = False
 
     def _get_key(self, formula, **kwargs):
@@ -73,69 +74,161 @@ class SimpleTypeChecker(walkers.DagWalker):
 
     def walk_type_to_type(self, formula, args, type_in, type_out):
         assert formula is not None
-        if any((x is None or x != type_in) for x in args):
-            return None
+        for x in args:
+            if x is None or x != type_in:
+                return None
         return type_out
 
-    def walk_bool_to_bool(self, formula, args):
+    def walk_bool_to_bool(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
         return self.walk_type_to_type(formula, args, BOOL, BOOL)
 
-    def walk_real_to_bool(self, formula, args):
+    def walk_real_to_bool(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
         return self.walk_type_to_type(formula, args, REAL, BOOL)
 
-    def walk_int_to_real(self, formula, args):
+    def walk_int_to_real(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
         return self.walk_type_to_type(formula, args, INT, REAL)
 
-    def walk_real_to_real(self, formula, args):
+    def walk_real_to_real(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
         return self.walk_type_to_type(formula, args, REAL, REAL)
 
-    def walk_realint_to_realint(self, formula, args):
+    def walk_realint_to_realint(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
         rval = self.walk_type_to_type(formula, args, REAL, REAL)
         if rval is None:
             rval = self.walk_type_to_type(formula, args, INT, INT)
         return rval
 
-    def walk_math_relation(self, formula, args):
-        rval = self.walk_type_to_type(formula, args, REAL, BOOL)
-        if rval is None:
-            rval = self.walk_type_to_type(formula, args, INT, BOOL)
-        return rval
+    def walk_bv_to_bv(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
 
-    def walk_ite(self, formula, args):
+        # We check that all children are BV and the same size
+        target_bv_type = BVType(formula.bv_width())
+        for a in args:
+            if not a == target_bv_type:
+                return None
+        return target_bv_type
+
+    def walk_bv_comp(self, formula, args, **kwargs):
+        # We check that all children are BV and the same size
+        a,b = args
+        if a != b or (not a.is_bv_type()):
+            return None
+        return BVType(1)
+
+    def walk_bv_to_bool(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
+        width = args[0].width
+        for a in args[1:]:
+            if (not a.is_bv_type()) or width != a.width:
+                return None
+        return BOOL
+
+    def walk_bv_concat(self, formula, args, **kwargs):
+        # Width of BV operators are computed at construction time.
+        # The type-checker only verifies that they are indeed
+        # correct.
+        try:
+            l_width = args[0].width
+            r_width = args[1].width
+            target_width = formula.bv_width()
+        except AttributeError:
+            return None
+        if not l_width + r_width == target_width:
+            return None
+        return BVType(target_width)
+
+    def walk_bv_extract(self, formula, args, **kwargs):
+        arg = args[0]
+        if not arg.is_bv_type():
+            return None
+        base_width = arg.width
+        target_width = formula.bv_width()
+        start = formula.bv_extract_start()
+        end = formula.bv_extract_end()
+        if start >= base_width or end >= base_width:
+            return None
+        if base_width < target_width:
+            return None
+        if target_width != (end-start+1):
+            return None
+        return BVType(target_width)
+
+    def walk_bv_rotate(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
+        target_width = formula.bv_width()
+        if target_width < formula.bv_rotation_step() or target_width < 0:
+            return None
+        if target_width != args[0].width:
+            return None
+        return BVType(target_width)
+
+    def walk_bv_extend(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
+        target_width = formula.bv_width()
+        if target_width < args[0].width or target_width < 0:
+            return None
+        return BVType(target_width)
+
+
+    def walk_math_relation(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
+        if args[0].is_real_type():
+            return self.walk_type_to_type(formula, args, REAL, BOOL)
+        if args[0].is_int_type():
+            return self.walk_type_to_type(formula, args, INT, BOOL)
+        if args[0].is_bv_type():
+            return self.walk_bv_to_bool(formula, args)
+        return None
+
+    def walk_ite(self, formula, args, **kwargs):
         assert formula is not None
         if None in args: return None
         if (args[0] == BOOL and args[1]==args[2]):
             return args[1]
         return None
 
-    def walk_identity_bool(self, formula, args):
+    def walk_identity_bool(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
         assert formula is not None
         assert len(args) == 0
         return BOOL
 
-    def walk_identity_real(self, formula, args):
+    def walk_identity_real(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
         assert formula is not None
         assert len(args) == 0
         return REAL
 
-    def walk_identity_int(self, formula, args):
+    def walk_identity_int(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
         assert formula is not None
         assert len(args) == 0
         return INT
 
-    def walk_symbol(self, formula, args):
+    def walk_identity_bv(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
+        assert formula is not None
+        assert len(args) == 0
+        return BVType(formula.bv_width())
+
+    def walk_symbol(self, formula, args, **kwargs):
         assert formula is not None
         assert len(args) == 0
         return formula.symbol_type()
 
-    def walk_quantifier(self, formula, args):
+    def walk_quantifier(self, formula, args, **kwargs):
+        #pylint: disable=unused-argument
         assert formula is not None
         assert len(args) == 1
         if args[0] == BOOL:
             return BOOL
         return None
 
-    def walk_function(self, formula, args):
+    def walk_function(self, formula, args, **kwargs):
         name = formula.function_name()
         assert name.is_symbol()
         tp = name.symbol_type()

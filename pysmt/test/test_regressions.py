@@ -16,14 +16,18 @@
 #   limitations under the License.
 #
 from fractions import Fraction
+from six.moves import xrange
 
 from pysmt.shortcuts import (Real, Plus, Symbol, Equals, And, Bool, Or,
-                             Div, LT, LE, Int, ToReal, Iff)
-from pysmt.shortcuts import Solver, is_valid, get_env, is_sat
+                             Div, LT, LE, Int, ToReal, Iff, Exists, Times)
+from pysmt.shortcuts import Solver, get_env, qelim, get_model, TRUE, ExactlyOne
 from pysmt.typing import REAL, BOOL, INT, FunctionType
 from pysmt.test import TestCase, skipIfSolverNotAvailable, skipIfNoSolverForLogic
-from pysmt.logics import QF_UFLIRA, QF_BOOL
-
+from pysmt.logics import QF_UFLIRA, QF_BOOL, LIA
+from pysmt.exceptions import ConvertExpressionError
+from pysmt.test.examples import get_example_formulae
+from pysmt.environment import Environment
+from pysmt.rewritings import cnf_as_set
 
 class TestRegressions(TestCase):
 
@@ -43,9 +47,9 @@ class TestRegressions(TestCase):
         p2 = Plus(a, b, c, Real((1,6)))
 
 
-        self.assertTrue(is_valid(Equals(p1, p2)))
-        self.assertTrue(is_valid(Equals(p1, p2), solver_name='z3'))
-        self.assertTrue(is_valid(Equals(p1, p2), solver_name='msat'))
+        self.assertValid(Equals(p1, p2))
+        self.assertValid(Equals(p1, p2), solver_name='z3')
+        self.assertValid(Equals(p1, p2), solver_name='msat')
 
 
     def test_substitute_memoization(self):
@@ -69,12 +73,12 @@ class TestRegressions(TestCase):
     @skipIfSolverNotAvailable("msat")
     @skipIfSolverNotAvailable("z3")
     def test_conversion_of_fractions_in_z3(self):
-        self.assertTrue(is_valid(Equals(Real(Fraction(1,9)),
-                                        Div(Real(1), Real(9))),
-                                 solver_name="msat"))
-        self.assertTrue(is_valid(Equals(Real(Fraction(1,9)),
-                                        Div(Real(1), Real(9))),
-                                 solver_name="z3"))
+        self.assertValid(Equals(Real(Fraction(1,9)),
+                                Div(Real(1), Real(9))),
+                         solver_name="msat")
+        self.assertValid(Equals(Real(Fraction(1,9)),
+                                Div(Real(1), Real(9))),
+                         solver_name="z3")
 
     def test_simplifying_int_plus_changes_type_of_expression(self):
         varA = Symbol("At", INT)
@@ -102,14 +106,14 @@ class TestRegressions(TestCase):
 
 
         for name in get_env().factory.all_solvers(logic=QF_BOOL):
-            self.assertTrue(is_sat(f_and_one, solver_name=name))
-            self.assertTrue(is_sat(f_or_one, solver_name=name))
-            self.assertTrue(is_sat(f_and_many, solver_name=name))
-            self.assertTrue(is_sat(f_or_many, solver_name=name))
+            self.assertSat(f_and_one, solver_name=name)
+            self.assertSat(f_or_one, solver_name=name)
+            self.assertSat(f_and_many, solver_name=name)
+            self.assertSat(f_or_many, solver_name=name)
 
         for name in get_env().factory.all_solvers(logic=QF_UFLIRA):
-            self.assertTrue(is_sat(f_plus_one, solver_name=name))
-            self.assertTrue(is_sat(f_plus_many, solver_name=name))
+            self.assertSat(f_plus_one, solver_name=name)
+            self.assertSat(f_plus_many, solver_name=name)
 
     def test_dependencies_not_includes_toreal(self):
         p = Symbol("p", INT)
@@ -164,6 +168,98 @@ class TestRegressions(TestCase):
             s.exit()
             s.exit()
             self.assertTrue(True)
+
+    @skipIfNoSolverForLogic(LIA)
+    def test_lia_qe_requiring_modulus(self):
+        x = Symbol("x", INT)
+        y = Symbol("y", INT)
+        f = Exists([x], Equals(y, Times(x, Int(2))))
+        with self.assertRaises(ConvertExpressionError):
+            qelim(f)
+
+        try:
+            qelim(f)
+        except ConvertExpressionError as ex:
+            # The modulus operator must be there
+            self.assertIn("%2", str(ex.expression))
+
+    @skipIfSolverNotAvailable("msat")
+    def test_msat_partial_model(self):
+        msat = Solver(name="msat")
+        x, y = Symbol("x"), Symbol("y")
+        msat.add_assertion(x)
+        c = msat.solve()
+        self.assertTrue(c)
+
+        model = msat.get_model()
+        self.assertNotIn(y, model)
+        self.assertIn(x, model)
+        msat.exit()
+
+    @skipIfSolverNotAvailable("z3")
+    def test_z3_model_iteration(self):
+        x, y = Symbol("x"), Symbol("y")
+        m = get_model(And(x, y), solver_name="z3")
+        self.assertIsNotNone(m)
+
+        for _, v in m:
+            self.assertEqual(v, TRUE())
+
+    def test_exactlyone_w_generator(self):
+        x, y = Symbol("x"), Symbol("y")
+
+        elems = [x,y]
+        f1 = ExactlyOne(elems)
+        f2 = ExactlyOne(e for e in elems)
+
+        self.assertEquals(f1, f2)
+
+    def test_determinism(self):
+        def get_set(env):
+            mgr = env.formula_manager
+            r = set(mgr.Symbol("x%d" % i) for i in xrange(1000))
+            for (f, _, _, _) in get_example_formulae(env):
+                r |= set([f])
+            return r
+
+        # As first thing on the environment we build the set of formulae
+        l1 = list(get_set(get_env()))
+
+        # We try this ten times...
+        for _ in xrange(10):
+            # Do something to screw up memory layout...
+            for y in (Symbol("y%d" % i) for i in xrange(1000)):
+                self.assertIsNotNone(y)
+
+            with Environment() as new_env:
+                # As first thing on the environment we build the set of formulae
+                l_test = list(get_set(new_env))
+
+                # The ordering of the sets should be the same...
+                for i,f in enumerate(l1):
+                    nf = new_env.formula_manager.normalize(f)
+                    self.assertEquals(nf, l_test[i])
+
+    def test_is_one(self):
+        self.assertTrue(Int(1).is_one())
+        self.assertTrue(Real(1).is_one())
+        self.assertTrue(Int(0).is_zero())
+        self.assertTrue(Real(0).is_zero())
+
+    def test_cnf_as_set(self):
+        r = cnf_as_set(Symbol("x"))
+        self.assertTrue(type(r) == frozenset)
+
+    def test_substitute_to_real(self):
+        p = Symbol("p", INT)
+        f = LT(ToReal(p), Real(0))
+
+        new_f = f.substitute({p: Real(1)}).simplify()
+        self.assertEqual(new_f, Bool(False))
+
+    def test_empty_string_symbol(self):
+        with self.assertRaises(ValueError):
+            Symbol("")
 
 
 if __name__ == "__main__":

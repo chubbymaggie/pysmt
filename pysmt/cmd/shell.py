@@ -22,7 +22,7 @@ import argparse
 from warnings import warn
 
 from pysmt.shortcuts import *
-from pysmt.typing import INT, REAL, BOOL
+from pysmt.typing import INT, REAL, BOOL, BVType, BV32
 
 from pysmt.smtlib.parser import SmtLibParser
 from pysmt.smtlib.script import evaluate_command
@@ -46,6 +46,8 @@ False
 >>>> is_unsat(f)
 True
 
+>>>> str(get_model(x))
+'x := True'
 
 Happy Solving!
 """
@@ -80,6 +82,8 @@ class PysmtShell(object):
 
 
     def interactive(self):
+        # Enable infix notation in Interactive mode
+        get_env().enable_infix_notation = True
         try:
             import IPython
             print(welcome_msg)
@@ -118,15 +122,15 @@ class PysmtShell(object):
 
     def main(self):
         if self.args.interactive:
-            if self.args.file != None:
+            if self.args.file is not None:
                 print("Unable to execute in interactive mode with an input file")
-                exit(1)
+                sys.exit(1)
             if self.args.solver != "auto":
                 warn("The solver option will be ignored in interactive mode")
             self.interactive()
         else:
             input_stream = sys.stdin
-            if self.args.file != None:
+            if self.args.file is not None:
                 input_stream = open(self.args.file, "r")
             self.smtlib_solver(input_stream)
 

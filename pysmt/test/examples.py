@@ -19,8 +19,22 @@ from collections import namedtuple
 from fractions import Fraction
 
 import pysmt.logics
-from pysmt.shortcuts import *
-from pysmt.typing import REAL, BOOL, INT, FunctionType
+from pysmt.environment import get_env
+from pysmt.shortcuts import (Symbol, Function,
+                             Int, Real, FALSE, TRUE,
+                             And, Iff, Or, Not, Implies, Ite,
+                             LT, LE, GT, GE,
+                             Times, Equals, Plus, Minus, Div, ToReal,
+                             ForAll, Exists,
+                             BV, SBV, BVOne, BVZero,
+                             BVNot, BVAnd, BVOr, BVXor,
+                             BVConcat, BVExtract,
+                             BVULT, BVUGT, BVULE, BVUGE, BVSGE,
+                             BVNeg, BVAdd, BVMul, BVUDiv, BVURem, BVSub,
+                             BVLShl, BVLShr,BVRol, BVRor,
+                             BVZExt, BVSExt, BVSub, BVComp, BVAShr, BVSLE,
+                             BVSLT, BVSDiv, BVSRem)
+from pysmt.typing import REAL, BOOL, INT, FunctionType, BV8, BV16
 
 
 Example = namedtuple('Example',
@@ -46,6 +60,9 @@ def get_example_formulae(environment=None):
 
         ih = Symbol("ih", FunctionType(INT, [REAL, INT]))
         ig = Symbol("ig", FunctionType(INT, [INT]))
+
+        bv8 = Symbol("bv1", BV8)
+        bv16 =Symbol("bv2", BV16)
 
         result = [
             # Formula, is_valid, is_sat, is_qf
@@ -208,6 +225,206 @@ def get_example_formulae(environment=None):
                     is_sat=False,
                     logic=pysmt.logics.QF_UFLRA),
 
+            #
+            # BV
+            #
+
+            # bv_one & bv_zero == bv_zero
+            Example(expr=Equals(BVAnd(BVOne(32), BVZero(32)),
+                                BVZero(32)),
+                    is_valid=True,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # ~(010) == 101
+            Example(expr=Equals(BVNot(BV("010")),
+                                BV("101")),
+                    is_valid=True,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # "111" xor "000" == "000"
+            Example(expr=Equals(BVXor(BV("111"), BV("000")),
+                                BV("000")),
+                    is_valid=False,
+                    is_sat=False,
+                    logic=pysmt.logics.QF_BV),
+
+            # bv8 :: bv8 < bv_zero
+            Example(expr=BVULT(BVConcat(bv8, bv8),
+                               BVZero(16)),
+                    is_valid=False,
+                    is_sat=False,
+                    logic=pysmt.logics.QF_BV),
+
+            # bv_one[:7] == bv_one
+            Example(expr=Equals(BVExtract(BVOne(32), end=7),
+                                BVOne(8)),
+                    is_valid=True,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # (((bv8 + bv_one) * bv(5)) / bv(5)) > bv(0)
+            Example(expr=BVUGT(BVUDiv(BVMul(BVAdd(bv8, BVOne(8)), BV(5, width=8)),
+                                      BV(5, width=8)),
+                               BVZero(8)),
+                    is_valid=False,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # bv16 >=u bv(0)
+            Example(expr=BVUGE(bv16, BVZero(16)),
+                    is_valid=True,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # bv16 >=s bv(0)
+            Example(expr=BVSGE(bv16, BVZero(16)),
+                    is_valid=False,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # (BV(5) rem BV(2) > bv_zero) /\ (BV(5) rem BV(2) < bv_one)
+            Example(expr=And(BVUGT(BVURem(BV(5, width=32), BV(2, width=32)), BVZero(32)),
+                             BVULE(BVURem(BV(5, width=32), BV(2, width=32)), BVOne(32))),
+                    is_valid=True,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # ((bv_one + (- bv_one)) << 1) >> 1 == bv_one
+            Example(expr=Equals(BVLShr(BVLShl(BVAdd(BVOne(32),
+                                                    BVNeg(BVOne(32))),
+                                              1), 1),
+                                BVOne(32)),
+                    is_valid=False,
+                    is_sat=False,
+                    logic=pysmt.logics.QF_BV),
+
+            # bv_one - bv_one == bv_zero
+            Example(expr=Equals(BVSub(BVOne(32), BVOne(32)), BVZero(32)),
+                    is_valid=True,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # Rotations
+            Example(expr=Equals(BVRor(BVRol(BVOne(32), 1),1), BVOne(32)),
+                    is_valid=True,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # Extensions
+            Example(expr=Equals(BVZExt(BVZero(5), 11),
+                                BVSExt(BVZero(1), 15)),
+                    is_valid=True,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # bv16 - bv16 = 0_16
+            Example(expr=Equals(BVSub(bv16, bv16), BVZero(16)),
+                    is_valid=True,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # (bv16 - bv16)[0:7] = bv8
+            Example(expr=Equals(BVExtract(BVSub(bv16, bv16), 0, 7), bv8),
+                    is_valid=False,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # (bv16[0,7] comp bv8) = bv1
+            Example(expr=Equals(BVComp(BVExtract(bv16, 0, 7), bv8), BVOne(1)),
+                    is_valid=False,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # (bv16 comp bv16) = bv0
+            Example(expr=Equals(BVComp(bv16, bv16), BVZero(1)),
+                    is_valid=False,
+                    is_sat=False,
+                    logic=pysmt.logics.QF_BV),
+
+            # (bv16 s< bv16)
+            Example(expr=BVSLT(bv16, bv16),
+                    is_valid=False,
+                    is_sat=False,
+                    logic=pysmt.logics.QF_BV),
+
+            # (bv16 s< 0_16)
+            Example(expr=BVSLT(bv16, BVZero(16)),
+                    is_valid=False,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # (bv16 u< bv16)
+            Example(expr=BVULT(bv16, bv16),
+                    is_valid=False,
+                    is_sat=False,
+                    logic=pysmt.logics.QF_BV),
+
+            # (bv16 s< 0_16)
+            Example(expr=BVULT(bv16, BVZero(16)),
+                    is_valid=False,
+                    is_sat=False,
+                    logic=pysmt.logics.QF_BV),
+
+            # (bv16 | 0_16) = bv16
+            Example(expr=Equals(BVOr(bv16, BVZero(16)), bv16),
+                    is_valid=True,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # (bv16 & 0_16) = 0_16
+            Example(expr=Equals(BVAnd(bv16, BVZero(16)), BVZero(16)),
+                    is_valid=True,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # 0_16 s< bv16 & ((bv16 s/ -1) s< 0)
+            Example(expr=And(BVSLT(BVZero(16), bv16),
+                             BVSLT(BVSDiv(bv16, SBV(-1, 16)), BVZero(16))),
+                    is_valid=False,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # 0_16 s< bv16 & ((bv16 s% -1) s< 0)
+            Example(expr=And(BVSLT(BVZero(16), bv16),
+                             BVSLT(BVSRem(bv16, BVOne(16)), BVZero(16))),
+                    is_valid=False,
+                    is_sat=False,
+                    logic=pysmt.logics.QF_BV),
+
+            # bv16 u% 1 = 0_16
+            Example(expr=Equals(BVURem(bv16, BVOne(16)), BVZero(16)),
+                    is_valid=True,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # bv16 s% 1 = 0_16
+            Example(expr=Equals(BVSRem(bv16, BVOne(16)), BVZero(16)),
+                    is_valid=True,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # bv16 s% -1 = 0_16
+            Example(expr=Equals(BVSRem(bv16, BVNeg(BVOne(16))), BVZero(16)),
+                    is_valid=True,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # bv16 a>> 0 = bv16
+            Example(expr=Equals(BVAShr(bv16, BVZero(16)), bv16),
+                    is_valid=True,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
+            # 0 s<= bv16 & bv16 a>> 1 = bv16 >> 1
+            Example(expr=And(BVSLE(BVZero(16), bv16),
+                             Equals(BVAShr(bv16, BVOne(16)),
+                                    BVLShr(bv16, BVOne(16)))),
+                    is_valid=False,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BV),
+
 
             #
             # Quantification
@@ -265,6 +482,13 @@ def get_example_formulae(environment=None):
                     logic=pysmt.logics.LRA
                 ),
 
+            # x /\ forall r. (r + s = 5)
+            Example(expr=And(x, ForAll([r], Equals(Plus(r,s), Real(5)))),
+                    is_valid=False,
+                    is_sat=False,
+                    logic=pysmt.logics.LRA
+                ),
+
             #
             # UFLIRA
             #
@@ -310,6 +534,15 @@ def get_example_formulae(environment=None):
                     logic=pysmt.logics.QF_UFLIRA
                 ),
 
+            # Test complex names
+            Example(expr=And(Symbol("Did you know that any string works? #yolo"),
+                             Symbol("10"),
+                             Symbol("|#somesolverskeepthe||"),
+                             Symbol(" ")),
+                    is_valid=False,
+                    is_sat=True,
+                    logic=pysmt.logics.QF_BOOL
+                ),
 
         ]
         return result

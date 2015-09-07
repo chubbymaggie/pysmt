@@ -20,7 +20,7 @@ import os
 from nose.plugins.attrib import attr
 
 from pysmt.shortcuts import Implies, is_sat, is_valid, reset_env
-from pysmt.cnf import CNFizer
+from pysmt.rewritings import CNFizer
 from pysmt.logics import QF_BOOL, QF_LRA, QF_LIA, QF_UFLIRA
 from pysmt.test import TestCase, skipIfNoSolverForLogic
 from pysmt.test.examples import EXAMPLE_FORMULAS
@@ -36,8 +36,7 @@ class TestCnf(TestCase):
                 continue
             cnf = conv.convert_as_formula(example.expr)
 
-            res = is_valid(Implies(cnf, example.expr), logic=logic)
-            self.assertTrue(res)
+            self.assertValid(Implies(cnf, example.expr), logic=logic)
 
             res = is_sat(cnf, logic=logic)
             self.assertEqual(res, example.is_sat)
@@ -87,8 +86,7 @@ class TestCnf(TestCase):
                 conv.convert_as_formula(expr)
             return
         cnf = conv.convert_as_formula(expr)
-        res = is_valid(Implies(cnf, expr), logic=logic)
-        self.assertTrue(res)
+        self.assertValid(Implies(cnf, expr), logic=logic)
 
         res = is_sat(cnf, logic=logic)
         self.assertEqual(res, res_is_sat)

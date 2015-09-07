@@ -17,6 +17,8 @@
 #
 """This module contains all custom exceptions of pySMT."""
 
+import pysmt.operators as op
+
 class UnknownSmtLibCommandError(Exception):
     """Raised when the parser finds an unknown command."""
     pass
@@ -53,3 +55,45 @@ class SolverRedefinitionError(Exception):
     """Exception representing errors caused by multiple defintion of solvers
        having the same name."""
     pass
+
+class SolverNotConfiguredForUnsatCoresError(Exception):
+    """
+    Exception raised if a solver not configured for generating unsat
+    cores is required to produce a core.
+    """
+    pass
+
+class SolverStatusError(Exception):
+    """
+    Exception raised if a method requiring a specific solver status is
+    incorrectly called in the wrong status.
+    """
+    pass
+
+class ConvertExpressionError(Exception):
+    """Exception raised if the converter cannot convert an expression."""
+
+    def __init__(self, message=None, expression=None):
+        Exception.__init__(self)
+        self.message = message
+        self.expression=expression
+
+    def __str__(self):
+        return self.message
+
+class UnsupportedOperatorError(Exception):
+    """The expression contains an operator that is not supported.
+
+    The argument node_type contains the unsupported operator id.
+    """
+
+    def __init__(self, message=None, node_type=None, expression=None):
+        if message is None:
+            message = "Unsupported operator '%s' (node_type: %d)" % (op.op_to_str(node_type), node_type)
+        Exception.__init__(self)
+        self.message = message
+        self.expression = expression
+        self.node_type = node_type
+
+    def __str__(self):
+        return self.message
